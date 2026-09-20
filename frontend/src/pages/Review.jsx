@@ -1,8 +1,8 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   FileSpreadsheet, Filter, CheckCircle2, Download, Loader2,
-  FileJson, FileText, Sheet, Layers, ScanText, Type, FileStack,
+  FileJson, FileText, Sheet, Layers, ScanText, Type, FileStack, Undo2, Redo2, Keyboard,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Header } from "@/components/Header";
@@ -24,6 +24,9 @@ export default function Review() {
   const [onlyDoubtful, setOnlyDoubtful] = useState(false);
   const [downloading, setDownloading] = useState(null);
   const [pdf, setPdf] = useState(null);
+  const [undoStack, setUndoStack] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
+  const [reprocessing, setReprocessing] = useState(false);
 
   const load = useCallback(async () => {
     if (!docId) { setLoading(false); return; }
@@ -43,22 +46,49 @@ export default function Review() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => () => { if (pdf) pdf.destroy?.(); }, [pdf]);
 
+  // ---- low-level appliers (used by actions + undo/redo) ----
+  const applyCellState = useCallback(async (tableId, cell) => {
+    await api.put(`/documents/${docId}/cell-state`, {
+      table_id: tableId, fila: cell.fila, columna: cell.columna,
+      valor: cell.valor, score_confianza: cell.score_confianza,
+      edited: cell.edited, norm_conf: cell.norm_conf, reason_code: cell.reason_code,
+    });
+    setTables((prev) => prev.map((tb) =>
+      tb.id !== tableId ? tb : {
+        ...tb,
+        cells: tb.cells.map((c) => (c.fila === cell.fila && c.columna === cell.columna ? { ...c, ...cell } : c)),
+      }
+    ));
+  }, [docId]);
+
+  const applyColumnType = useCallback(async (tableId, columna, tipo) => {
+    const res = await api.put(`/documents/${docId}/column-type`, { table_id: tableId, columna, tipo });
+    const byId = {};
+    res.data.cells.forEach((c) => { byId[`${c.fila}-${c.columna}`] = c; });
+    setTables((prev) => prev.map((tb) =>
+      tb.id !== tableId ? tb : {
+        ...tb,
+        column_types: res.data.column_types,
+        cells: tb.cells.map((c) => (c.columna === columna ? (byId[`${c.fila}-${c.columna}`] || c) : c)),
+      }
+    ));
+  }, [docId]);
+
+  const pushAction = (action) => {
+    setUndoStack((s) => [...s, action]);
+    setRedoStack([]);
+  };
+
   const handleColumnTypeChange = async (tableId, columna, tipo) => {
+    const table = tables.find((t) => t.id === tableId);
+    const prevType = table?.column_types?.[columna] || "text";
+    if (prevType === tipo) return;
     try {
-      const res = await api.put(`/documents/${docId}/column-type`, { table_id: tableId, columna, tipo });
-      const updatedById = {};
-      res.data.cells.forEach((c) => { updatedById[`${c.fila}-${c.columna}`] = c; });
-      setTables((prev) =>
-        prev.map((tb) =>
-          tb.id !== tableId ? tb : {
-            ...tb,
-            column_types: res.data.column_types,
-            cells: tb.cells.map((c) =>
-              c.columna === columna ? (updatedById[`${c.fila}-${c.columna}`] || c) : c
-            ),
-          }
-        )
-      );
+      await applyColumnType(tableId, columna, tipo);
+      pushAction({
+        undo: () => applyColumnType(tableId, columna, prevType),
+        redo: () => applyColumnType(tableId, columna, tipo),
+      });
       toast.success(t("toast.typeChanged"));
     } catch (e) {
       toast.error(e?.response?.data?.detail || t("toast.error"));
@@ -66,25 +96,78 @@ export default function Review() {
   };
 
   const handleCellSave = async (tableId, fila, columna, valor) => {
+    const table = tables.find((t) => t.id === tableId);
+    const prev = { ...table.cells.find((c) => c.fila === fila && c.columna === columna) };
+    if (prev.valor === valor) return;
+    const next = { ...prev, valor, score_confianza: 1.0, edited: true, norm_conf: 1.0, reason_code: "high" };
     try {
-      await api.put(`/documents/${docId}/cell`, { table_id: tableId, fila, columna, valor });
-      setTables((prev) =>
-        prev.map((tb) =>
-          tb.id !== tableId ? tb : {
-            ...tb,
-            cells: tb.cells.map((c) =>
-              c.fila === fila && c.columna === columna
-                ? { ...c, valor, score_confianza: 1.0, edited: true }
-                : c
-            ),
-          }
-        )
-      );
+      await applyCellState(tableId, next);
+      pushAction({
+        undo: () => applyCellState(tableId, prev),
+        redo: () => applyCellState(tableId, next),
+      });
       toast.success(t("toast.cellSaved"));
     } catch (e) {
       toast.error(t("toast.error"));
     }
   };
+
+  const doUndo = useCallback(async () => {
+    setUndoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const action = stack[stack.length - 1];
+      action.undo().catch(() => toast.error(t("toast.error")));
+      setRedoStack((r) => [...r, action]);
+      return stack.slice(0, -1);
+    });
+  }, [t]);
+
+  const doRedo = useCallback(async () => {
+    setRedoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const action = stack[stack.length - 1];
+      action.redo().catch(() => toast.error(t("toast.error")));
+      setUndoStack((u) => [...u, action]);
+      return stack.slice(0, -1);
+    });
+  }, [t]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) { e.preventDefault(); doUndo(); }
+      else if ((k === "z" && e.shiftKey) || k === "y") { e.preventDefault(); doRedo(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [doUndo, doRedo]);
+
+  const reprocessOcr = async () => {
+    setReprocessing(true);
+    try {
+      await api.post(`/documents/${docId}/reprocess?mode=ocr&lang=${lang}`);
+      setUndoStack([]); setRedoStack([]);
+      await load();
+      toast.success(t("toast.reprocessed"));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || t("toast.error"));
+    } finally {
+      setReprocessing(false);
+    }
+  };
+
+  const metrics = useMemo(() => {
+    let g = 0, a = 0, r = 0;
+    tables.forEach((tb) => tb.cells.forEach((c) => {
+      const s = c.score_confianza;
+      if (s >= 0.9) g++; else if (s >= 0.6) a++; else r++;
+    }));
+    const total = g + a + r;
+    const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+    return { g, a, r, total, doubtful: a + r, pg: pct(g), pa: pct(a), pr: pct(r) };
+  }, [tables]);
 
   const validate = async () => {
     try {
@@ -165,7 +248,44 @@ export default function Review() {
               <StatusBadge estado={doc.estado} t={t} />
             </p>
           </div>
+          <button
+            data-testid="reprocess-ocr-button"
+            onClick={reprocessOcr}
+            disabled={reprocessing}
+            title={t("review.reprocessHint")}
+            className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-muted-foreground transition hover:border-primary/50 hover:text-foreground disabled:opacity-60"
+          >
+            {reprocessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanText className="h-4 w-4" />}
+            {t("review.reprocessOcr")}
+          </button>
         </div>
+
+        {/* Metrics panel */}
+        {metrics.total > 0 && (
+          <div data-testid="metrics-panel" className="mt-6 rounded-2xl border border-border bg-card p-5 fade-up">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <Layers className="h-4 w-4" /> {t("review.metricsTitle")}
+                <span className="font-mono text-foreground">· {metrics.total} {t("review.cells")}</span>
+              </h2>
+              <div className="flex items-center gap-4 text-sm">
+                <MetricStat testid="metric-green" cls="conf-green" pct={metrics.pg} n={metrics.g} label={t("review.high")} />
+                <MetricStat testid="metric-amber" cls="conf-amber" pct={metrics.pa} n={metrics.a} label={t("review.medium")} />
+                <MetricStat testid="metric-red" cls="conf-red" pct={metrics.pr} n={metrics.r} label={t("review.low")} />
+              </div>
+            </div>
+            <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="bg-emerald-500" style={{ width: `${metrics.pg}%` }} />
+              <div className="bg-amber-500" style={{ width: `${metrics.pa}%` }} />
+              <div className="bg-red-500" style={{ width: `${metrics.pr}%` }} />
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground" data-testid="metric-remaining">
+              {metrics.doubtful > 0
+                ? `${metrics.doubtful} ${t("review.doubtfulLeft")}`
+                : t("review.allValidated")}
+            </p>
+          </div>
+        )}
 
         {/* Toolbar */}
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4">
@@ -179,6 +299,26 @@ export default function Review() {
             >
               <Filter className="h-4 w-4" /> {t("review.onlyDoubtful")}
             </button>
+            <div className="flex items-center gap-1 rounded-full border border-border p-0.5">
+              <button
+                data-testid="undo-button"
+                onClick={doUndo}
+                disabled={undoStack.length === 0}
+                title="Ctrl+Z"
+                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:text-foreground disabled:opacity-40"
+              >
+                <Undo2 className="h-4 w-4" /> {t("review.undo")}
+              </button>
+              <button
+                data-testid="redo-button"
+                onClick={doRedo}
+                disabled={redoStack.length === 0}
+                title="Ctrl+Shift+Z"
+                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:text-foreground disabled:opacity-40"
+              >
+                <Redo2 className="h-4 w-4" /> {t("review.redo")}
+              </button>
+            </div>
             <span data-testid="doubtful-counter" className="text-sm">
               {doubtful > 0 ? (
                 <span className="font-semibold text-amber-500">{doubtful} {t("review.doubtfulLeft")}</span>
@@ -187,7 +327,12 @@ export default function Review() {
               )}
             </span>
           </div>
-          <Legend t={t} />
+          <div className="flex items-center gap-3">
+            <span className="hidden items-center gap-1.5 text-xs text-muted-foreground lg:flex">
+              <Keyboard className="h-3.5 w-3.5" /> {t("review.keyboardHint")}
+            </span>
+            <Legend t={t} />
+          </div>
         </div>
 
         {/* Tables */}
@@ -267,6 +412,14 @@ const Legend = ({ t }) => (
         <span className="text-muted-foreground">{x.label}</span>
       </span>
     ))}
+  </div>
+);
+
+const MetricStat = ({ testid, cls, pct, n, label }) => (
+  <div data-testid={testid} className="flex items-center gap-2" title={label}>
+    <span className={`h-3 w-3 rounded-sm border ${cls}`} />
+    <span className="font-mono font-semibold">{pct}%</span>
+    <span className="text-xs text-muted-foreground">({n})</span>
   </div>
 );
 

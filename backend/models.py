@@ -71,6 +71,17 @@ class CellUpdate(BaseModel):
     valor: str
 
 
+class CellStateUpdate(BaseModel):
+    table_id: str
+    fila: int
+    columna: int
+    valor: str
+    score_confianza: float
+    edited: bool = False
+    norm_conf: Optional[float] = None
+    reason_code: Optional[str] = None
+
+
 class ColumnTypeUpdate(BaseModel):
     table_id: str
     columna: int

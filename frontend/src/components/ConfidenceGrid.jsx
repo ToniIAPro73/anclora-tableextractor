@@ -2,9 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Pencil, Info, ChevronDown, Calendar, Hash, Type as TypeIcon, Loader2 } from "lucide-react";
 import { useLang } from "@/contexts/LangContext";
 import { renderCrop } from "@/lib/pdf";
-import {
-  Popover, PopoverContent, PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -16,7 +14,6 @@ export const confClass = (score) => {
 };
 
 const cellAt = (table, r, c) => table.cells.find((x) => x.fila === r && x.columna === c) || null;
-
 const TYPE_ICONS = { date: Calendar, number: Hash, text: TypeIcon };
 
 const CellDetail = ({ cell, method, pdf, t }) => {
@@ -30,8 +27,7 @@ const CellDetail = ({ cell, method, pdf, t }) => {
     setTried(true);
     setLoading(true);
     try {
-      const url = await renderCrop(pdf, cell.pagina, cell.bbox);
-      setCrop(url);
+      setCrop(await renderCrop(pdf, cell.pagina, cell.bbox));
     } catch (e) { /* noop */ } finally { setLoading(false); }
   };
 
@@ -42,7 +38,9 @@ const CellDetail = ({ cell, method, pdf, t }) => {
           data-testid={`cell-detail-button-${cell.fila}-${cell.columna}`}
           className="rounded p-0.5 text-current opacity-60 transition hover:opacity-100"
           onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
           title={t("review.detailTitle")}
+          tabIndex={-1}
         >
           <Info className="h-3.5 w-3.5" />
         </button>
@@ -54,7 +52,6 @@ const CellDetail = ({ cell, method, pdf, t }) => {
             <h4 className="text-sm font-semibold">{t("review.detailTitle")}</h4>
           </div>
           <p className="text-xs text-muted-foreground">{t(`review.reasons.${cell.reason_code || "high"}`)}</p>
-
           <div className="grid grid-cols-2 gap-2 text-xs">
             <Stat label={t("review.score")} value={pct(cell.score_confianza)} />
             <Stat label={t("review.page")} value={cell.pagina} />
@@ -63,19 +60,14 @@ const CellDetail = ({ cell, method, pdf, t }) => {
             <Stat label={t("review.method")} value={method === "ocr" ? "OCR" : t("review.native")} />
             <Stat label={t("review.original")} value={cell.valor_original || "—"} mono />
           </div>
-
           <div>
             <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("review.cropLabel")}</p>
             {loading ? (
-              <div className="flex h-16 items-center justify-center rounded-md border border-border bg-muted/40">
-                <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              </div>
+              <div className="flex h-16 items-center justify-center rounded-md border border-border bg-muted/40"><Loader2 className="h-4 w-4 animate-spin text-primary" /></div>
             ) : crop ? (
               <img src={crop} alt="crop" data-testid="cell-crop-image" className="max-h-28 w-full rounded-md border border-border bg-white object-contain" />
             ) : (
-              <div className="flex h-14 items-center justify-center rounded-md border border-dashed border-border text-[11px] text-muted-foreground">
-                {t("review.noCrop")}
-              </div>
+              <div className="flex h-14 items-center justify-center rounded-md border border-dashed border-border text-[11px] text-muted-foreground">{t("review.noCrop")}</div>
             )}
           </div>
         </div>
@@ -133,30 +125,88 @@ const ColumnTypeMenu = ({ table, colIdx, onColumnTypeChange, t }) => {
 
 export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful, onColumnTypeChange, pdf }) => {
   const { t } = useLang();
-  const [editing, setEditing] = useState(null);
+  const nrows = table.num_filas;
+  const ncols = table.num_columnas;
+  const [sel, setSel] = useState(null); // {r,c}
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef(null);
+  const cellRefs = useRef({});
+  const selR = sel ? sel.r : -1;
+  const selC = sel ? sel.c : -1;
 
   useEffect(() => {
     if (editing && inputRef.current) {
       inputRef.current.focus();
       inputRef.current.select();
     }
-  }, [editing]);
+  }, [editing, selR, selC]);
 
-  const startEdit = (r, c, value) => { setEditing({ r, c }); setDraft(value ?? ""); };
-
-  const commit = async () => {
-    if (!editing) return;
-    const { r, c } = editing;
-    const current = cellAt(table, r, c);
-    if (current && draft !== current.valor) await onCellSave(table.id, r, c, draft);
-    setEditing(null);
+  const isDim = (r, c) => {
+    const cell = cellAt(table, r, c);
+    const score = cell ? cell.score_confianza : 1;
+    return onlyDoubtful && score >= 0.9;
   };
 
-  const onKeyDown = (e) => {
-    if (e.key === "Enter") { e.preventDefault(); commit(); }
-    else if (e.key === "Escape") { e.preventDefault(); setEditing(null); }
+  const focusTd = (r, c) => {
+    requestAnimationFrame(() => cellRefs.current[`${r}-${c}`]?.focus());
+  };
+
+  const selectCell = (r, c) => {
+    if (r < 0 || c < 0 || r >= nrows || c >= ncols) return;
+    setEditing(false);
+    setSel({ r, c });
+    focusTd(r, c);
+  };
+
+  const beginEdit = (r, c, initial) => {
+    if (r < 0 || c < 0 || r >= nrows || c >= ncols || isDim(r, c)) return;
+    const cell = cellAt(table, r, c);
+    setSel({ r, c });
+    setDraft(initial != null ? initial : (cell?.valor ?? ""));
+    setEditing(true);
+  };
+
+  const commit = async () => {
+    if (!editing || !sel) return;
+    const { r, c } = sel;
+    const cur = cellAt(table, r, c);
+    if (cur && draft !== cur.valor) await onCellSave(table.id, r, c, draft);
+    setEditing(false);
+  };
+
+  const nextCell = (r, c, back) => {
+    let nr = r, nc = c + (back ? -1 : 1);
+    if (nc >= ncols) { nc = 0; nr = r + 1; }
+    if (nc < 0) { nc = ncols - 1; nr = r - 1; }
+    return { nr, nc };
+  };
+
+  const commitThenTarget = async (nr, nc, edit) => {
+    await commit();
+    if (nr < 0 || nc < 0 || nr >= nrows || nc >= ncols) {
+      selectCell(sel.r, sel.c);
+      return;
+    }
+    if (edit && !isDim(nr, nc)) beginEdit(nr, nc);
+    else selectCell(nr, nc);
+  };
+
+  const onTdKeyDown = (e, r, c) => {
+    if (editing) return;
+    if (e.key === "ArrowUp") { e.preventDefault(); selectCell(r - 1, c); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); selectCell(r + 1, c); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); selectCell(r, c - 1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); selectCell(r, c + 1); }
+    else if (e.key === "Tab") { e.preventDefault(); const { nr, nc } = nextCell(r, c, e.shiftKey); selectCell(nr, nc); }
+    else if (e.key === "Enter" || e.key === "F2") { e.preventDefault(); beginEdit(r, c); }
+    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); beginEdit(r, c, e.key); }
+  };
+
+  const onInputKeyDown = async (e) => {
+    if (e.key === "Enter") { e.preventDefault(); await commitThenTarget(sel.r + 1, sel.c, true); }
+    else if (e.key === "Tab") { e.preventDefault(); const { nr, nc } = nextCell(sel.r, sel.c, e.shiftKey); await commitThenTarget(nr, nc, true); }
+    else if (e.key === "Escape") { e.preventDefault(); setEditing(false); focusTd(sel.r, sel.c); }
   };
 
   return (
@@ -176,22 +226,27 @@ export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful, onColumnTypeCh
           </tr>
         </thead>
         <tbody>
-          {Array.from({ length: table.num_filas }).map((_, r) => (
+          {Array.from({ length: nrows }).map((_, r) => (
             <tr key={r} className="hover:bg-muted/30">
               <td className="sticky left-0 z-10 border-r border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground">{r + 1}</td>
               {table.columnas.map((_, c) => {
                 const cell = cellAt(table, r, c);
                 const score = cell ? cell.score_confianza : 1;
                 const isDoubtful = score < 0.9;
-                const isEditing = editing && editing.r === r && editing.c === c;
+                const isEditing = editing && sel && sel.r === r && sel.c === c;
+                const isSel = sel && sel.r === r && sel.c === c;
                 const dim = onlyDoubtful && !isDoubtful;
                 return (
                   <td
                     key={c}
+                    ref={(el) => (cellRefs.current[`${r}-${c}`] = el)}
                     data-testid={`cell-${table.id}-${r}-${c}`}
                     data-score={score}
-                    className={`group relative border border-transparent align-middle data-cell ${confClass(score)} ${dim ? "conf-dimmed" : ""}`}
-                    onClick={() => !isEditing && !dim && startEdit(r, c, cell?.valor)}
+                    tabIndex={dim ? -1 : 0}
+                    className={`group relative border align-middle outline-none data-cell ${confClass(score)} ${dim ? "conf-dimmed" : ""} ${isSel && !isEditing ? "z-20 ring-2 ring-inset ring-primary" : "border-transparent"}`}
+                    onClick={() => !isEditing && !dim && beginEdit(r, c)}
+                    onFocus={() => { if (!isDim(r, c)) setSel({ r, c }); }}
+                    onKeyDown={(e) => onTdKeyDown(e, r, c)}
                   >
                     {isEditing ? (
                       <input
@@ -200,7 +255,7 @@ export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful, onColumnTypeCh
                         value={draft}
                         onChange={(e) => setDraft(e.target.value)}
                         onBlur={commit}
-                        onKeyDown={onKeyDown}
+                        onKeyDown={onInputKeyDown}
                         className="w-full min-w-[7rem] bg-background px-3 py-1.5 text-sm outline-none ring-2 ring-primary"
                       />
                     ) : (
@@ -209,13 +264,9 @@ export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful, onColumnTypeCh
                         <span className="flex items-center gap-1">
                           {cell?.edited && <span className="h-1.5 w-1.5 rounded-full bg-primary" title="editado" />}
                           {isDoubtful && !dim && cell && (
-                            <span onClick={(e) => e.stopPropagation()}>
-                              <CellDetail cell={cell} method={table.extraction_method} pdf={pdf} t={t} />
-                            </span>
+                            <CellDetail cell={cell} method={table.extraction_method} pdf={pdf} t={t} />
                           )}
-                          {isDoubtful && !dim && (
-                            <Pencil className="h-3 w-3 opacity-0 transition group-hover:opacity-70" />
-                          )}
+                          {isDoubtful && !dim && <Pencil className="h-3 w-3 opacity-0 transition group-hover:opacity-70" />}
                         </span>
                       </div>
                     )}

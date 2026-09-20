@@ -91,6 +91,13 @@ export const translations = {
         norm_ambiguous: "Valor ambiguo al normalizar",
         high: "Alta confianza — sin incidencias",
       },
+      reprocessOcr: "Reprocesar con OCR",
+      reprocessHint: "Fuerza OCR (Tesseract) en todas las páginas cuando la extracción nativa no detecta la tabla",
+      metricsTitle: "Resumen de confianza",
+      cells: "celdas",
+      undo: "Deshacer",
+      redo: "Rehacer",
+      keyboardHint: "Flechas para navegar · Enter/Tab para editar",
     },
     exportPanel: {
       title: "Exportar documento",
@@ -133,6 +140,7 @@ export const translations = {
       loginError: "No se pudo iniciar sesión",
       typeChanged: "Columna renormalizada",
       batchExported: "Exportación por lotes completada",
+      reprocessed: "Documento reprocesado con OCR",
     },
   },
   en: {
@@ -227,6 +235,13 @@ export const translations = {
         norm_ambiguous: "Ambiguous value during normalization",
         high: "High confidence — no issues",
       },
+      reprocessOcr: "Reprocess with OCR",
+      reprocessHint: "Force OCR (Tesseract) on every page when native extraction misses the table",
+      metricsTitle: "Confidence summary",
+      cells: "cells",
+      undo: "Undo",
+      redo: "Redo",
+      keyboardHint: "Arrows to navigate · Enter/Tab to edit",
     },
     exportPanel: {
       title: "Export document",
@@ -269,6 +284,7 @@ export const translations = {
       loginError: "Could not sign in",
       typeChanged: "Column renormalized",
       batchExported: "Batch export completed",
+      reprocessed: "Document reprocessed with OCR",
     },
   },
 };

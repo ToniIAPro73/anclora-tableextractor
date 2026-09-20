@@ -132,12 +132,18 @@ def _ocr_page(path, page_num, dpi=200):
     return {"rows": rows, "ncols": ncols, "page": page_num, "method": "ocr"}
 
 
-def extract_tables(path):
-    """Returns (num_pages, [table_dict,...]) with raw (un-normalized) cells."""
+def extract_tables(path, force_ocr=False):
+    """Returns (num_pages, [table_dict,...]) with raw (un-normalized) cells.
+    force_ocr=True skips native extraction and runs OCR on every page."""
     tables = []
     with pdfplumber.open(path) as pdf:
         num_pages = len(pdf.pages)
         for pidx, page in enumerate(pdf.pages, start=1):
+            if force_ocr:
+                ocr = _ocr_page(path, pidx)
+                if ocr and ocr["rows"]:
+                    tables.append(ocr)
+                continue
             page_text = page.extract_text() or ""
             found = page.find_tables()
             if found:

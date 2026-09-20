@@ -17,8 +17,8 @@ from db import db
 from exporters import (export_batch_xlsx, export_batch_zip, export_csv,
                        export_json, export_xlsx)
 from extraction import extract_tables, merge_multipage
-from models import (BatchExport, CellUpdate, ColumnTypeUpdate, Documento, User,
-                    new_id, now_iso)
+from models import (BatchExport, CellStateUpdate, CellUpdate, ColumnTypeUpdate,
+                    Documento, User, new_id, now_iso)
 from normalization import infer_column_type, normalize_value
 from schema_validation import build_cells, combine_confidence, reason_code
 
@@ -32,29 +32,16 @@ app = FastAPI(title="Anclora TableExtract")
 
 
 # ---------------- Pipeline ----------------
-def _process_pdf_sync(path):
-    num_pages, tables = extract_tables(path)
+def _process_pdf_sync(path, force_ocr=False):
+    num_pages, tables = extract_tables(path, force_ocr=force_ocr)
     tables = merge_multipage(tables)
     return num_pages, tables
 
 
-async def _process_document(user: User, filename: str, content: bytes, lang: str):
-    t0 = time.time()
-    doc = Documento(user_id=user.user_id, nombre_archivo=filename)
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
-        tmp.write(content)
-        tmp.flush()
-        try:
-            num_pages, raw_tables = await asyncio.to_thread(_process_pdf_sync, tmp.name)
-        except Exception as e:
-            logger.exception("extraction failed")
-            doc.error = str(e)
-            await db.documents.insert_one(doc.model_dump())
-            return doc
-
-    doc.num_paginas = num_pages
+async def _tables_from_raw(doc_id, user_id, raw_tables, lang):
+    """Build stored-table dicts (with inferred columns, deterministic
+    normalization and per-cell confidence) from raw extracted tables."""
     stored_tables = []
-
     for raw in raw_tables:
         rows = raw["rows"]
         ncols = raw["ncols"]
@@ -93,11 +80,10 @@ async def _process_document(user: User, filename: str, content: bytes, lang: str
             rows_meta.append(meta_row)
 
         cells = build_cells(columnas, column_types, rows_meta)
-        table_id = new_id("tbl")
-        table_doc = {
-            "id": table_id,
-            "documento_id": doc.id,
-            "user_id": user.user_id,
+        stored_tables.append({
+            "id": new_id("tbl"),
+            "documento_id": doc_id,
+            "user_id": user_id,
             "pagina_origen": raw["page"],
             "source_pages": raw.get("source_pages", [raw["page"]]),
             "extraction_method": raw["method"],
@@ -106,8 +92,26 @@ async def _process_document(user: User, filename: str, content: bytes, lang: str
             "num_filas": len(rows_meta),
             "num_columnas": ncols,
             "cells": [c.model_dump() for c in cells],
-        }
-        stored_tables.append(table_doc)
+        })
+    return stored_tables
+
+
+async def _process_document(user: User, filename: str, content: bytes, lang: str):
+    t0 = time.time()
+    doc = Documento(user_id=user.user_id, nombre_archivo=filename)
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
+        tmp.write(content)
+        tmp.flush()
+        try:
+            num_pages, raw_tables = await asyncio.to_thread(_process_pdf_sync, tmp.name)
+        except Exception as e:
+            logger.exception("extraction failed")
+            doc.error = str(e)
+            await db.documents.insert_one(doc.model_dump())
+            return doc
+
+    doc.num_paginas = num_pages
+    stored_tables = await _tables_from_raw(doc.id, user.user_id, raw_tables, lang)
 
     doc.num_tablas = len(stored_tables)
     doc.process_ms = int((time.time() - t0) * 1000)
@@ -191,6 +195,66 @@ async def update_cell(doc_id: str, update: CellUpdate, user: User = Depends(get_
         raise HTTPException(status_code=404, detail="Celda no encontrada")
     await db.tables.update_one({"id": update.table_id}, {"$set": {"cells": table["cells"]}})
     return {"ok": True, "fila": update.fila, "columna": update.columna, "valor": update.valor}
+
+
+@app.put("/api/documents/{doc_id}/cell-state")
+async def set_cell_state(doc_id: str, upd: CellStateUpdate, user: User = Depends(get_current_user)):
+    """Set an exact cell state — used by client undo/redo to restore prior values."""
+    table = await db.tables.find_one({"id": upd.table_id, "documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
+    if not table:
+        raise HTTPException(status_code=404, detail="Tabla no encontrada")
+    updated = None
+    for cell in table["cells"]:
+        if cell["fila"] == upd.fila and cell["columna"] == upd.columna:
+            cell["valor"] = upd.valor
+            cell["score_confianza"] = upd.score_confianza
+            cell["edited"] = upd.edited
+            if upd.norm_conf is not None:
+                cell["norm_conf"] = upd.norm_conf
+            if upd.reason_code is not None:
+                cell["reason_code"] = upd.reason_code
+            updated = cell
+            break
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Celda no encontrada")
+    await db.tables.update_one({"id": upd.table_id}, {"$set": {"cells": table["cells"]}})
+    return {"ok": True, "cell": updated}
+
+
+@app.post("/api/documents/{doc_id}/reprocess")
+async def reprocess_document(doc_id: str, mode: str = "ocr", lang: str = "es", user: User = Depends(get_current_user)):
+    """Re-run extraction on the stored PDF. mode='ocr' forces Tesseract OCR on
+    every page (useful when native detection missed a scanned table)."""
+    doc = await db.documents.find_one({"id": doc_id, "user_id": user.user_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    rec = await db.pdf_files.find_one({"documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(status_code=404, detail="PDF original no disponible para reprocesar")
+
+    data = rec["data"]
+    if not isinstance(data, (bytes, bytearray)):
+        data = bytes(data)
+    force_ocr = mode == "ocr"
+    t0 = time.time()
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
+        tmp.write(data)
+        tmp.flush()
+        try:
+            num_pages, raw_tables = await asyncio.to_thread(_process_pdf_sync, tmp.name, force_ocr)
+        except Exception as e:
+            logger.exception("reprocess failed")
+            raise HTTPException(status_code=500, detail=f"Error al reprocesar: {e}")
+
+    stored_tables = await _tables_from_raw(doc_id, user.user_id, raw_tables, lang)
+    await db.tables.delete_many({"documento_id": doc_id})
+    if stored_tables:
+        await db.tables.insert_many(stored_tables)
+    await db.documents.update_one(
+        {"id": doc_id},
+        {"$set": {"estado": "pendiente", "num_tablas": len(stored_tables), "num_paginas": num_pages, "process_ms": int((time.time() - t0) * 1000)}},
+    )
+    return {"ok": True, "num_tablas": len(stored_tables), "mode": mode}
 
 
 @app.post("/api/documents/{doc_id}/validate")
