@@ -35,11 +35,18 @@ Web app to extract tables from PDFs (including scanned) into validated Excel/CSV
 - Google Auth, history, i18n (ES/EN), theme system (dark/light/system) with FOUC prevention.
 
 ## Backlog / Remaining
-- **P1**: Client-side PDF page thumbnail preview (pdf.js) in the upload dropzone.
-- **P1**: Lower-confidence handling UX demo (seed messy fixtures) + confidence breakdown popover (bbox/OCR score).
-- **P2**: Batch export across multiple documents; column-type override per column in the grid.
+- **P2**: Batch export across multiple documents — DONE (2026-09-20).
+- **P2**: Column-type override per column in the grid — DONE (2026-09-20).
+- **P1**: PDF page thumbnails in upload — DONE (2026-09-20).
+- **P1**: Confidence breakdown popover (page/bbox crop/scores) — DONE (2026-09-20).
 - **P2**: Robustness of OCR table reconstruction for complex scanned layouts.
 - **P2**: Undo/redo and keyboard Tab-to-next-cell navigation in the grid.
+
+## Iteration 2 (2026-09-20) — 4 features added, tested (backend 29/29, frontend 100%)
+- Real pdf.js page thumbnails in the upload dropzone (client-side).
+- Per-cell confidence-detail popover: page, extraction/normalization confidence, reason, and a live PDF crop of the source region (original PDF stored in db.pdf_files, served via GET /api/documents/{id}/file).
+- Batch export from History: combined .xlsx (multi-sheet) or ZIP of CSV/JSON (POST /api/documents/export-batch).
+- Editable column type (date/number/text) that instantly renormalizes non-edited cells (PUT /api/documents/{id}/column-type). Cells now carry bbox, extraction_conf, norm_conf, reason_code.
 
 ## Notes
 - OCR (Tesseract) fallback is best-effort for scanned PDFs; native (text) path fully covered.

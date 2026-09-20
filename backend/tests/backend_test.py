@@ -9,6 +9,7 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://pdf-to-excel-178.pre
 TOKEN = "test_session_fixed"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 SAMPLE_PDF = "/tmp/sample_invoice.pdf"
+MULTI_PDF = "/tmp/multi.pdf"
 
 
 @pytest.fixture(scope="module")
@@ -156,3 +157,221 @@ class TestHistory:
         assert r.status_code in (200, 204)
         r2 = requests.get(f"{BASE_URL}/api/documents/{doc_id}", headers=HEADERS, timeout=30)
         assert r2.status_code == 404
+
+
+# --- New: dedicated fixture that uploads an isolated doc for new-feature tests
+@pytest.fixture(scope="module")
+def fresh_doc_id():
+    with open(SAMPLE_PDF, "rb") as f:
+        r = requests.post(
+            f"{BASE_URL}/api/documents/upload?lang=es",
+            headers=HEADERS,
+            files={"files": ("sample_invoice.pdf", f, "application/pdf")},
+            timeout=120,
+        )
+    assert r.status_code == 200, r.text
+    did = r.json()["documents"][0]["id"]
+    yield did
+    requests.delete(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30)
+
+
+# --- New: PDF file storage + serving ---
+class TestPdfFile:
+    def test_get_pdf_file(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}/file", headers=HEADERS, timeout=30)
+        assert r.status_code == 200
+        assert r.headers.get("content-type", "").startswith("application/pdf")
+        assert len(r.content) > 500
+        assert r.content[:4] == b"%PDF"
+
+    def test_pdf_file_requires_auth(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}/file", timeout=30)
+        assert r.status_code == 401
+
+    def test_pdf_file_deleted_with_doc(self):
+        # upload, delete, then /file should be 404
+        with open(SAMPLE_PDF, "rb") as f:
+            up = requests.post(
+                f"{BASE_URL}/api/documents/upload?lang=es",
+                headers=HEADERS,
+                files={"files": ("s.pdf", f, "application/pdf")},
+                timeout=120,
+            )
+        did = up.json()["documents"][0]["id"]
+        # confirm exists
+        assert requests.get(f"{BASE_URL}/api/documents/{did}/file", headers=HEADERS, timeout=30).status_code == 200
+        assert requests.delete(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30).status_code in (200, 204)
+        r = requests.get(f"{BASE_URL}/api/documents/{did}/file", headers=HEADERS, timeout=30)
+        assert r.status_code == 404
+
+
+# --- New: enriched cell metadata (bbox, extraction_conf, norm_conf, reason_code) ---
+class TestCellMetadata:
+    def test_cell_shape(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t = r.json()["tablas"][0]
+        allowed = {"", "ocr_low", "date_ambiguous", "number_ambiguous", "norm_ambiguous", "high"}
+        for c in t["cells"]:
+            assert "bbox" in c
+            if c["bbox"] is not None:
+                assert isinstance(c["bbox"], list) and len(c["bbox"]) == 4
+                for v in c["bbox"]:
+                    assert isinstance(v, (int, float))
+            assert "extraction_conf" in c and 0 <= c["extraction_conf"] <= 1
+            assert "norm_conf" in c and 0 <= c["norm_conf"] <= 1
+            assert "reason_code" in c and c["reason_code"] in allowed
+
+
+# --- New: column-type re-normalization ---
+class TestColumnType:
+    def test_invalid_type_400(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t = r.json()["tablas"][0]
+        payload = {"table_id": t["id"], "columna": 0, "tipo": "banana"}
+        r2 = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/column-type", headers=HEADERS, json=payload, timeout=30)
+        assert r2.status_code == 400
+
+    def test_text_to_date_lowers_confidence(self, fresh_doc_id):
+        # find a text column that has non-empty values (e.g. 'Producto')
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t = r.json()["tablas"][0]
+        target_col = None
+        for i, typ in enumerate(t["column_types"]):
+            if typ == "text":
+                # check has some non-empty valor
+                vals = [c for c in t["cells"] if c["columna"] == i and c.get("valor_original", "").strip()]
+                if vals:
+                    target_col = i
+                    break
+        assert target_col is not None, "No text column with values found"
+
+        payload = {"table_id": t["id"], "columna": target_col, "tipo": "date"}
+        r2 = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/column-type", headers=HEADERS, json=payload, timeout=30)
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["column_types"][target_col] == "date"
+
+        # re-fetch and validate cells in that column now have low score + reason_code=date_ambiguous
+        r3 = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t3 = next(x for x in r3.json()["tablas"] if x["id"] == t["id"])
+        assert t3["column_types"][target_col] == "date"
+        col_cells = [c for c in t3["cells"] if c["columna"] == target_col and c.get("valor_original", "").strip()]
+        assert col_cells
+        for c in col_cells:
+            if c.get("edited"):
+                continue
+            assert c["score_confianza"] < 0.6, f"expected red, got {c['score_confianza']}"
+            assert c["reason_code"] == "date_ambiguous", c["reason_code"]
+
+    def test_edited_cells_preserved_on_type_change(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t = r.json()["tablas"][0]
+        # pick any column (previous test may have flipped the text column to date)
+        target_col = 0
+        # ensure it's set to text first so edit is meaningful
+        requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/column-type", headers=HEADERS,
+                     json={"table_id": t["id"], "columna": target_col, "tipo": "text"}, timeout=30)
+        # edit one cell in that column
+        edit_payload = {"table_id": t["id"], "fila": 0, "columna": target_col, "valor": "KEEP_ME_EDITED"}
+        r_edit = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/cell", headers=HEADERS, json=edit_payload, timeout=30)
+        assert r_edit.status_code == 200
+        # change column type -> number
+        r2 = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/column-type", headers=HEADERS,
+                          json={"table_id": t["id"], "columna": target_col, "tipo": "number"}, timeout=30)
+        assert r2.status_code == 200
+        r3 = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t3 = next(x for x in r3.json()["tablas"] if x["id"] == t["id"])
+        edited_cell = next(c for c in t3["cells"] if c["fila"] == 0 and c["columna"] == target_col)
+        assert edited_cell["valor"] == "KEEP_ME_EDITED"
+        assert edited_cell.get("edited") is True
+        assert edited_cell["score_confianza"] == 1.0
+
+
+# --- New: batch export ---
+class TestBatchExport:
+    @pytest.fixture(scope="class")
+    def two_doc_ids(self):
+        ids = []
+        for name in ("batch_a.pdf", "batch_b.pdf"):
+            with open(SAMPLE_PDF, "rb") as f:
+                r = requests.post(
+                    f"{BASE_URL}/api/documents/upload?lang=es",
+                    headers=HEADERS,
+                    files={"files": (name, f, "application/pdf")},
+                    timeout=120,
+                )
+            assert r.status_code == 200
+            ids.append(r.json()["documents"][0]["id"])
+        yield ids
+        for did in ids:
+            requests.delete(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30)
+
+    def test_empty_ids_400(self):
+        r = requests.post(f"{BASE_URL}/api/documents/export-batch", headers=HEADERS,
+                          json={"doc_ids": [], "format": "xlsx"}, timeout=30)
+        assert r.status_code == 400
+
+    def test_batch_xlsx(self, two_doc_ids):
+        r = requests.post(f"{BASE_URL}/api/documents/export-batch", headers=HEADERS,
+                          json={"doc_ids": two_doc_ids, "format": "xlsx"}, timeout=60)
+        assert r.status_code == 200
+        ct = r.headers.get("content-type", "")
+        assert "sheet" in ct or "spreadsheet" in ct
+        # xlsx = zip magic
+        assert r.content[:2] == b"PK"
+        assert len(r.content) > 500
+
+    def test_batch_csv_zip(self, two_doc_ids):
+        r = requests.post(f"{BASE_URL}/api/documents/export-batch", headers=HEADERS,
+                          json={"doc_ids": two_doc_ids, "format": "csv"}, timeout=60)
+        assert r.status_code == 200
+        assert r.headers.get("content-type", "").startswith("application/zip")
+        assert r.content[:2] == b"PK"
+        # verify zip has entries
+        import io, zipfile
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        names = z.namelist()
+        assert len(names) >= 2
+        assert any(n.endswith(".csv") for n in names)
+
+    def test_batch_json_zip(self, two_doc_ids):
+        r = requests.post(f"{BASE_URL}/api/documents/export-batch", headers=HEADERS,
+                          json={"doc_ids": two_doc_ids, "format": "json"}, timeout=60)
+        assert r.status_code == 200
+        assert r.headers.get("content-type", "").startswith("application/zip")
+        import io, zipfile
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        assert any(n.endswith(".json") for n in z.namelist())
+
+    def test_batch_marks_exportado(self, two_doc_ids):
+        # after previous exports, both should be exportado
+        for did in two_doc_ids:
+            d = requests.get(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30).json()
+            assert d["documento"]["estado"] == "exportado"
+
+    def test_batch_invalid_format(self, two_doc_ids):
+        r = requests.post(f"{BASE_URL}/api/documents/export-batch", headers=HEADERS,
+                          json={"doc_ids": two_doc_ids, "format": "pdf"}, timeout=30)
+        assert r.status_code == 400
+
+
+# --- New: multi-page PDF still processes ---
+class TestMultiPage:
+    def test_multi_upload(self):
+        with open(MULTI_PDF, "rb") as f:
+            r = requests.post(
+                f"{BASE_URL}/api/documents/upload?lang=es",
+                headers=HEADERS,
+                files={"files": ("multi.pdf", f, "application/pdf")},
+                timeout=120,
+            )
+        assert r.status_code == 200, r.text
+        d = r.json()["documents"][0]
+        assert d["num_paginas"] >= 2
+        # /file should return the pdf
+        rf = requests.get(f"{BASE_URL}/api/documents/{d['id']}/file", headers=HEADERS, timeout=30)
+        assert rf.status_code == 200
+        assert rf.content[:4] == b"%PDF"
+        # cleanup
+        requests.delete(f"{BASE_URL}/api/documents/{d['id']}", headers=HEADERS, timeout=30)
+

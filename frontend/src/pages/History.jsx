@@ -56,7 +56,6 @@ export default function HistoryPage() {
       window.URL.revokeObjectURL(url);
       setDocs((prev) => prev.map((d) => (selected.has(d.id) ? { ...d, estado: "exportado" } : d)));
       toast.success(t("toast.batchExported"));
-      setSelected(new Set());
     } catch (e) {
       toast.error(e?.response?.data?.detail || t("toast.error"));
     } finally {
