@@ -1,0 +1,153 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 210 40% 98%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 200 98% 39%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 222 47% 11%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 199 89% 92%;
+  --accent-foreground: 200 98% 25%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 200 98% 39%;
+  --radius: 0.75rem;
+
+  --toggle-bg: 210 40% 98%;
+  --toggle-border: 200 98% 39%;
+  --toggle-glow: rgba(2, 132, 199, 0.25);
+  --toggle-fg: 222 47% 11%;
+}
+
+.dark {
+  --background: 222 39% 7%;
+  --foreground: 210 40% 98%;
+  --card: 222 33% 11%;
+  --card-foreground: 210 40% 98%;
+  --popover: 217 33% 12%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 199 92% 60%;
+  --primary-foreground: 222 47% 8%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 33% 15%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 217 33% 20%;
+  --accent-foreground: 199 92% 70%;
+  --destructive: 0 63% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 217 33% 18%;
+  --input: 217 33% 18%;
+  --ring: 199 92% 60%;
+
+  --toggle-bg: 222 47% 8%;
+  --toggle-border: 199 92% 60%;
+  --toggle-glow: rgba(56, 189, 248, 0.35);
+  --toggle-fg: 210 40% 98%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.font-mono,
+.data-cell {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+
+/* ---- Premium glowing header toggles ---- */
+.anclora-toggle {
+  background-color: hsl(var(--toggle-bg));
+  border: 1.5px solid hsl(var(--toggle-border));
+  color: hsl(var(--toggle-fg));
+  box-shadow: 0 0 10px var(--toggle-glow), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  transition: box-shadow 180ms ease, background-color 180ms ease, transform 180ms ease;
+}
+.anclora-toggle:hover {
+  box-shadow: 0 0 16px var(--toggle-glow), 0 0 4px var(--toggle-glow);
+}
+.anclora-toggle:focus-visible {
+  outline: 2px solid hsl(var(--toggle-border));
+  outline-offset: 2px;
+}
+.anclora-toggle:active {
+  transform: scale(0.96);
+}
+
+/* ---- Confidence cells ---- */
+.conf-green {
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+.dark .conf-green {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.3);
+}
+.conf-amber {
+  background-color: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+  border-color: rgba(217, 119, 6, 0.4);
+}
+.dark .conf-amber {
+  background-color: rgba(245, 158, 11, 0.22);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.5);
+}
+.conf-red {
+  background-color: rgba(239, 68, 68, 0.16);
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.5);
+}
+.dark .conf-red {
+  background-color: rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.6);
+}
+
+.conf-dimmed {
+  opacity: 0.35;
+  filter: grayscale(0.4);
+}
+
+/* scrollbars */
+.thin-scroll::-webkit-scrollbar { height: 10px; width: 10px; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 999px;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fadeUp 0.4s ease both; }
+
+.grid-bg {
+  background-image:
+    radial-gradient(circle at 1px 1px, hsl(var(--border)) 1px, transparent 0);
+  background-size: 22px 22px;
+}

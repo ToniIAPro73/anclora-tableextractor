@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0B0F19" />
+    <meta name="description" content="Anclora TableExtract — Extracción y validación de tablas PDF con IA" />
+    <title>Anclora TableExtract</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // FOUC prevention: apply theme before React renders.
+      (function () {
+        try {
+          var mode = localStorage.getItem("anclora_theme") || "dark";
+          var systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var isDark = mode === "dark" || (mode === "system" && systemDark);
+          if (isDark) document.documentElement.classList.add("dark");
+          var lang = localStorage.getItem("anclora_lang") || "es";
+          document.documentElement.lang = lang;
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <noscript>Necesitas habilitar JavaScript para usar esta aplicación.</noscript>
+    <div id="root"></div>
+  </body>
+</html>

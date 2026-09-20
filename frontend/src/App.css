@@ -1,0 +1,4 @@
+/* App-specific styles intentionally minimal; see index.css for the design system. */
+.App {
+  min-height: 100vh;
+}
