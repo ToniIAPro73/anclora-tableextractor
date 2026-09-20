@@ -8,6 +8,33 @@ import { useLang } from "@/contexts/LangContext";
 import { api } from "@/lib/api";
 import { Checkbox } from "@/components/ui/checkbox";
 
+const ThumbCell = ({ docId }) => {
+  const [url, setUrl] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let objUrl;
+    let active = true;
+    api.get(`/documents/${docId}/thumbnail`, { responseType: "blob" })
+      .then((res) => {
+        if (!active) return;
+        objUrl = URL.createObjectURL(res.data);
+        setUrl(objUrl);
+      })
+      .catch(() => active && setFailed(true));
+    return () => { active = false; if (objUrl) URL.revokeObjectURL(objUrl); };
+  }, [docId]);
+
+  return (
+    <div data-testid={`thumb-${docId}`} className="flex h-16 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted">
+      {url ? (
+        <img src={url} alt="pdf" className="h-full w-full object-cover object-top" />
+      ) : (
+        <FileText className={`h-5 w-5 ${failed ? "text-muted-foreground" : "text-red-500 animate-pulse"}`} />
+      )}
+    </div>
+  );
+};
+
 export default function HistoryPage() {
   const { t, lang } = useLang();
   const navigate = useNavigate();
@@ -171,8 +198,8 @@ export default function HistoryPage() {
                         />
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2.5">
-                          <FileText className="h-4 w-4 shrink-0 text-red-500" />
+                        <div className="flex items-center gap-3">
+                          <ThumbCell docId={d.id} />
                           <span className="font-medium">{d.nombre_archivo}</span>
                         </div>
                       </td>

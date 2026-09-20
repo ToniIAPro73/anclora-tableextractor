@@ -61,6 +61,7 @@ class Documento(BaseModel):
     num_paginas: int = 0
     num_tablas: int = 0
     process_ms: int = 0
+    thumb_path: Optional[str] = None
     error: Optional[str] = None
 
 

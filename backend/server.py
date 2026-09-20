@@ -16,7 +16,7 @@ from column_inference import infer_column_names
 from db import db
 from exporters import (export_batch_xlsx, export_batch_zip, export_csv,
                        export_json, export_xlsx)
-from extraction import extract_tables, merge_multipage
+from extraction import extract_tables, merge_multipage, render_first_page_thumb
 from models import (BatchExport, CellStateUpdate, CellUpdate, ColumnRulesUpdate,
                     ColumnTypeUpdate, DateAutofill, Documento, User, new_id,
                     now_iso)
@@ -115,6 +115,16 @@ async def _process_document(user: User, filename: str, content: bytes, lang: str
 
     doc.num_paginas = num_pages
     stored_tables = await _tables_from_raw(doc.id, user.user_id, raw_tables, lang)
+
+    # first-page thumbnail -> object storage (best effort)
+    try:
+        thumb = await asyncio.to_thread(render_first_page_thumb, content)
+        if thumb:
+            tpath = f"{APP_NAME}/thumbs/{user.user_id}/{doc.id}.png"
+            tres = await asyncio.to_thread(put_object, tpath, thumb, "image/png")
+            doc.thumb_path = tres.get("path", tpath)
+    except Exception as e:
+        logger.warning(f"thumbnail store failed: {e}")
 
     doc.num_tablas = len(stored_tables)
     doc.process_ms = int((time.time() - t0) * 1000)
@@ -312,6 +322,15 @@ async def get_document_file(doc_id: str, user: User = Depends(get_current_user))
     if data is None:
         raise HTTPException(status_code=404, detail="PDF no disponible")
     return Response(content=data, media_type="application/pdf", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/api/documents/{doc_id}/thumbnail")
+async def get_document_thumbnail(doc_id: str, user: User = Depends(get_current_user)):
+    doc = await db.documents.find_one({"id": doc_id, "user_id": user.user_id}, {"_id": 0})
+    if not doc or not doc.get("thumb_path"):
+        raise HTTPException(status_code=404, detail="Miniatura no disponible")
+    data, _ = await asyncio.to_thread(get_object, doc["thumb_path"])
+    return Response(content=data, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.put("/api/documents/{doc_id}/column-type")

@@ -175,3 +175,24 @@ def merge_multipage(tables):
     for m in merged:
         m.setdefault("source_pages", [m["page"]])
     return merged
+
+
+
+def render_first_page_thumb(content: bytes, width: int = 240):
+    """Render the first PDF page to a small PNG thumbnail (bytes) or None."""
+    try:
+        import io
+
+        from pdf2image import convert_from_bytes
+        images = convert_from_bytes(content, first_page=1, last_page=1, dpi=80)
+        if not images:
+            return None
+        img = images[0]
+        ratio = width / img.width
+        img = img.resize((width, max(1, int(img.height * ratio))))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"thumbnail render failed: {e}")
+        return None
