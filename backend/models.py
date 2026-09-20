@@ -88,6 +88,24 @@ class ColumnTypeUpdate(BaseModel):
     tipo: str  # date | number | text
 
 
+class DateAutofill(BaseModel):
+    table_id: str
+    columna: int
+    fmt: Optional[str] = None
+
+
+class ColumnRule(BaseModel):
+    required: bool = False
+    min: Optional[float] = None
+    max: Optional[float] = None
+
+
+class ColumnRulesUpdate(BaseModel):
+    table_id: str
+    columna: int
+    rules: ColumnRule
+
+
 class BatchExport(BaseModel):
     doc_ids: List[str]
     format: str = "xlsx"  # xlsx | csv | json

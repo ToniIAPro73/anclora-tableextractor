@@ -17,9 +17,11 @@ from db import db
 from exporters import (export_batch_xlsx, export_batch_zip, export_csv,
                        export_json, export_xlsx)
 from extraction import extract_tables, merge_multipage
-from models import (BatchExport, CellStateUpdate, CellUpdate, ColumnTypeUpdate,
-                    Documento, User, new_id, now_iso)
-from normalization import infer_column_type, normalize_value
+from models import (BatchExport, CellStateUpdate, CellUpdate, ColumnRulesUpdate,
+                    ColumnTypeUpdate, DateAutofill, Documento, User, new_id,
+                    now_iso)
+from normalization import (detect_date_format, infer_column_type,
+                           normalize_value, parse_date_with)
 from schema_validation import build_cells, combine_confidence, reason_code
 
 ROOT_DIR = Path(__file__).parent
@@ -319,6 +321,63 @@ async def update_column_type(doc_id: str, upd: ColumnTypeUpdate, user: User = De
 
     await db.tables.update_one({"id": upd.table_id}, {"$set": {"cells": table["cells"], "column_types": types}})
     return {"ok": True, "column_types": types, "cells": updated_cells}
+
+
+@app.post("/api/documents/{doc_id}/date-autofill")
+async def date_autofill(doc_id: str, upd: DateAutofill, user: User = Depends(get_current_user)):
+    """Detect the source date format for a column and reparse every original
+    value to ISO across the whole column, resolving ambiguous date cells."""
+    table = await db.tables.find_one({"id": upd.table_id, "documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
+    if not table:
+        raise HTTPException(status_code=404, detail="Tabla no encontrada")
+
+    col_cells = [c for c in table["cells"] if c["columna"] == upd.columna]
+    originals = [c.get("valor_original", "") for c in col_cells if not c.get("edited")]
+    fmt = upd.fmt or detect_date_format(originals)[0]
+    if not fmt:
+        raise HTTPException(status_code=400, detail="No se pudo detectar un formato de fecha")
+
+    types = table.get("column_types", [])
+    while len(types) <= upd.columna:
+        types.append("text")
+    types[upd.columna] = "date"
+
+    updated_cells = []
+    for cell in table["cells"]:
+        if cell["columna"] != upd.columna:
+            continue
+        if cell.get("edited"):
+            updated_cells.append(cell)
+            continue
+        iso, ok = parse_date_with(cell.get("valor_original", ""), fmt)
+        if ok:
+            cell["valor"] = iso
+            cell["norm_conf"] = 1.0
+            cell["score_confianza"] = combine_confidence(cell.get("extraction_conf", 0.9), 1.0, True)
+            cell["reason_code"] = "high"
+        else:
+            cell["reason_code"] = reason_code("date", cell.get("extraction_conf", 0.9), cell.get("norm_conf", 0.55), bool((cell.get("valor") or "").strip()))
+        updated_cells.append(cell)
+
+    await db.tables.update_one({"id": upd.table_id}, {"$set": {"cells": table["cells"], "column_types": types}})
+    return {"ok": True, "fmt": fmt, "column_types": types, "cells": updated_cells}
+
+
+@app.put("/api/documents/{doc_id}/column-rules")
+async def set_column_rules(doc_id: str, upd: ColumnRulesUpdate, user: User = Depends(get_current_user)):
+    """Persist per-column validation rules (required / numeric range).
+    Violations are highlighted red in the review UI (evaluated client-side)."""
+    table = await db.tables.find_one({"id": upd.table_id, "documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
+    if not table:
+        raise HTTPException(status_code=404, detail="Tabla no encontrada")
+    rules = table.get("column_rules", {}) or {}
+    r = upd.rules.model_dump()
+    if not r.get("required") and r.get("min") is None and r.get("max") is None:
+        rules.pop(str(upd.columna), None)
+    else:
+        rules[str(upd.columna)] = r
+    await db.tables.update_one({"id": upd.table_id}, {"$set": {"column_rules": rules}})
+    return {"ok": True, "column_rules": rules}
 
 
 @app.post("/api/documents/export-batch")

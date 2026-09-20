@@ -10,9 +10,10 @@ import { ConfidenceGrid, confClass } from "@/components/ConfidenceGrid";
 import { useLang } from "@/contexts/LangContext";
 import { api } from "@/lib/api";
 import { loadPdfFromDocId } from "@/lib/pdf";
+import { ruleOf, effectiveScore } from "@/lib/validation";
 
 const countDoubtful = (tables) =>
-  tables.reduce((acc, t) => acc + t.cells.filter((c) => c.score_confianza < 0.9).length, 0);
+  tables.reduce((acc, t) => acc + t.cells.filter((c) => effectiveScore(c, ruleOf(t, c.columna)) < 0.9).length, 0);
 
 export default function Review() {
   const { docId } = useParams();
@@ -112,6 +113,59 @@ export default function Review() {
     }
   };
 
+  const applyDateAutofill = useCallback(async (tableId, columna) => {
+    const res = await api.post(`/documents/${docId}/date-autofill`, { table_id: tableId, columna });
+    const byId = {};
+    res.data.cells.forEach((c) => { byId[`${c.fila}-${c.columna}`] = c; });
+    setTables((prev) => prev.map((tb) =>
+      tb.id !== tableId ? tb : {
+        ...tb,
+        column_types: res.data.column_types,
+        cells: tb.cells.map((c) => (c.columna === columna ? (byId[`${c.fila}-${c.columna}`] || c) : c)),
+      }
+    ));
+    return res.data.fmt;
+  }, [docId]);
+
+  const applyCellsBulk = useCallback(async (tableId, cells) => {
+    for (const cell of cells) await applyCellState(tableId, cell);
+  }, [applyCellState]);
+
+  const handleDateAutofill = async (tableId, columna) => {
+    const table = tables.find((t) => t.id === tableId);
+    const prevCells = table.cells.filter((c) => c.columna === columna).map((c) => ({ ...c }));
+    try {
+      const fmt = await applyDateAutofill(tableId, columna);
+      pushAction({
+        undo: () => applyCellsBulk(tableId, prevCells),
+        redo: () => applyDateAutofill(tableId, columna),
+      });
+      toast.success(`${t("toast.datesAutofilled")}: ${fmt}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || t("toast.error"));
+    }
+  };
+
+  const applyRules = useCallback(async (tableId, columna, rules) => {
+    const res = await api.put(`/documents/${docId}/column-rules`, { table_id: tableId, columna, rules });
+    setTables((prev) => prev.map((tb) => (tb.id !== tableId ? tb : { ...tb, column_rules: res.data.column_rules })));
+  }, [docId]);
+
+  const handleSaveRules = async (tableId, columna, rules) => {
+    const table = tables.find((t) => t.id === tableId);
+    const prevRules = (table.column_rules || {})[String(columna)] || { required: false, min: null, max: null };
+    try {
+      await applyRules(tableId, columna, rules);
+      pushAction({
+        undo: () => applyRules(tableId, columna, prevRules),
+        redo: () => applyRules(tableId, columna, rules),
+      });
+      toast.success(t("toast.rulesSaved"));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || t("toast.error"));
+    }
+  };
+
   const doUndo = useCallback(async () => {
     setUndoStack((stack) => {
       if (stack.length === 0) return stack;
@@ -161,7 +215,7 @@ export default function Review() {
   const metrics = useMemo(() => {
     let g = 0, a = 0, r = 0;
     tables.forEach((tb) => tb.cells.forEach((c) => {
-      const s = c.score_confianza;
+      const s = effectiveScore(c, ruleOf(tb, c.columna));
       if (s >= 0.9) g++; else if (s >= 0.6) a++; else r++;
     }));
     const total = g + a + r;
@@ -356,7 +410,7 @@ export default function Review() {
                       : `${t("review.page")}: ${table.pagina_origen}`}
                   </span>
                 </div>
-                <ConfidenceGrid table={table} onCellSave={handleCellSave} onlyDoubtful={onlyDoubtful} onColumnTypeChange={handleColumnTypeChange} pdf={pdf} />
+                <ConfidenceGrid table={table} onCellSave={handleCellSave} onlyDoubtful={onlyDoubtful} onColumnTypeChange={handleColumnTypeChange} onDateAutofill={handleDateAutofill} onSaveRules={handleSaveRules} pdf={pdf} />
               </div>
             ))}
           </div>

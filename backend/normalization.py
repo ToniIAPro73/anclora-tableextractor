@@ -140,3 +140,31 @@ def normalize_value(raw: str, col_type: str):
             return normalize_number(s)
         return s, 0.55
     return s, 1.0
+
+
+def detect_date_format(values):
+    """Return the strptime format that parses the most of the given values."""
+    best, best_count = None, -1
+    for fmt in _DATE_FORMATS:
+        count = 0
+        for v in values:
+            v = (v or "").strip()
+            if not v:
+                continue
+            try:
+                datetime.strptime(v, fmt)
+                count += 1
+            except ValueError:
+                pass
+        if count > best_count:
+            best, best_count = fmt, count
+    return best, best_count
+
+
+def parse_date_with(s: str, fmt: str):
+    """Parse s with an explicit format -> (ISO string, ok)."""
+    s = (s or "").strip()
+    try:
+        return datetime.strptime(s, fmt).strftime("%Y-%m-%d"), True
+    except ValueError:
+        return s, False
