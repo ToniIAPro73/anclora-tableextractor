@@ -23,6 +23,7 @@ from models import (BatchExport, CellStateUpdate, CellUpdate, ColumnRulesUpdate,
 from normalization import (detect_date_format, infer_column_type,
                            normalize_value, parse_date_with)
 from schema_validation import build_cells, combine_confidence, reason_code
+from storage import APP_NAME, get_object, init_storage, put_object
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -121,12 +122,41 @@ async def _process_document(user: User, filename: str, content: bytes, lang: str
     if stored_tables:
         await db.tables.insert_many(stored_tables)
     if len(content) <= 15_000_000:
-        await db.pdf_files.replace_one(
-            {"documento_id": doc.id},
-            {"documento_id": doc.id, "user_id": user.user_id, "data": content},
-            upsert=True,
-        )
+        storage_path = f"{APP_NAME}/uploads/{user.user_id}/{doc.id}.pdf"
+        try:
+            result = await asyncio.to_thread(put_object, storage_path, content, "application/pdf")
+            await db.pdf_files.replace_one(
+                {"documento_id": doc.id},
+                {"documento_id": doc.id, "user_id": user.user_id,
+                 "storage_path": result.get("path", storage_path),
+                 "original_filename": filename, "content_type": "application/pdf",
+                 "size": result.get("size", len(content)), "is_deleted": False,
+                 "created_at": now_iso()},
+                upsert=True,
+            )
+        except Exception as e:
+            logger.warning(f"object storage upload failed, falling back to DB: {e}")
+            await db.pdf_files.replace_one(
+                {"documento_id": doc.id},
+                {"documento_id": doc.id, "user_id": user.user_id, "data": content,
+                 "original_filename": filename, "content_type": "application/pdf", "is_deleted": False},
+                upsert=True,
+            )
     return doc
+
+
+async def _load_pdf_bytes(doc_id, user_id):
+    """Return (bytes, record) for a document's stored PDF (object storage or legacy DB)."""
+    rec = await db.pdf_files.find_one({"documento_id": doc_id, "user_id": user_id, "is_deleted": {"$ne": True}}, {"_id": 0})
+    if not rec:
+        return None, None
+    if rec.get("storage_path"):
+        data, _ = await asyncio.to_thread(get_object, rec["storage_path"])
+        return data, rec
+    data = rec.get("data")
+    if data is not None and not isinstance(data, (bytes, bytearray)):
+        data = bytes(data)
+    return data, rec
 
 
 def _looks_like_header(row):
@@ -230,13 +260,10 @@ async def reprocess_document(doc_id: str, mode: str = "ocr", lang: str = "es", u
     doc = await db.documents.find_one({"id": doc_id, "user_id": user.user_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
-    rec = await db.pdf_files.find_one({"documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not rec:
+    data, _ = await _load_pdf_bytes(doc_id, user.user_id)
+    if data is None:
         raise HTTPException(status_code=404, detail="PDF original no disponible para reprocesar")
 
-    data = rec["data"]
-    if not isinstance(data, (bytes, bytearray)):
-        data = bytes(data)
     force_ocr = mode == "ocr"
     t0 = time.time()
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
@@ -281,12 +308,9 @@ async def delete_document(doc_id: str, user: User = Depends(get_current_user)):
 
 @app.get("/api/documents/{doc_id}/file")
 async def get_document_file(doc_id: str, user: User = Depends(get_current_user)):
-    rec = await db.pdf_files.find_one({"documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not rec:
+    data, _ = await _load_pdf_bytes(doc_id, user.user_id)
+    if data is None:
         raise HTTPException(status_code=404, detail="PDF no disponible")
-    data = rec["data"]
-    if not isinstance(data, (bytes, bytearray)):
-        data = bytes(data)
     return Response(content=data, media_type="application/pdf", headers={"Cache-Control": "private, max-age=3600"})
 
 
@@ -444,6 +468,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup():
+    try:
+        await asyncio.to_thread(init_storage)
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.warning(f"Object storage init failed (will retry lazily): {e}")
 
 
 @app.on_event("shutdown")

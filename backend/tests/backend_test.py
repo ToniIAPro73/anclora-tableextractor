@@ -484,3 +484,140 @@ class TestMultiPage:
         # cleanup
         requests.delete(f"{BASE_URL}/api/documents/{d['id']}", headers=HEADERS, timeout=30)
 
+
+@pytest.fixture(scope="module")
+def autofill_doc_id():
+    """Isolated doc for iteration-4 autofill/rules tests (unaffected by prior column-type flips)."""
+    with open(SAMPLE_PDF, "rb") as f:
+        r = requests.post(
+            f"{BASE_URL}/api/documents/upload?lang=es",
+            headers=HEADERS,
+            files={"files": ("autofill.pdf", f, "application/pdf")},
+            timeout=120,
+        )
+    assert r.status_code == 200, r.text
+    did = r.json()["documents"][0]["id"]
+    yield did
+    requests.delete(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30)
+
+
+# --- New (iteration 4): POST /date-autofill ---
+class TestDateAutofill:
+    def test_autofill_detects_and_reparses(self, autofill_doc_id):
+        fresh_doc_id = autofill_doc_id
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t = r.json()["tablas"][0]
+        table_id = t["id"]
+        # find a date column
+        date_cols = [i for i, x in enumerate(t["column_types"]) if x == "date"]
+        # Sample invoice has Fecha as column 0 with dd/mm/yyyy format
+        assert date_cols, f"No date column found; types={t['column_types']}"
+        col = date_cols[0]
+        payload = {"table_id": table_id, "columna": col}
+        r2 = requests.post(f"{BASE_URL}/api/documents/{fresh_doc_id}/date-autofill",
+                           headers=HEADERS, json=payload, timeout=30)
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["ok"] is True
+        assert body["fmt"], "no fmt returned"
+        # Sample uses dd/mm/yyyy so we expect %d/%m/%Y or similar
+        assert "%d" in body["fmt"] and "%m" in body["fmt"] and "%Y" in body["fmt"]
+        assert body["column_types"][col] == "date"
+        # Every non-edited, non-empty cell in column should be ISO YYYY-MM-DD w/ score high
+        r3 = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t3 = next(x for x in r3.json()["tablas"] if x["id"] == table_id)
+        col_cells = [c for c in t3["cells"] if c["columna"] == col and (c.get("valor_original") or "").strip()]
+        assert col_cells
+        for c in col_cells:
+            if c.get("edited"):
+                continue
+            v = c.get("valor") or ""
+            assert len(v) == 10 and v[4] == "-" and v[7] == "-", f"not ISO: {v}"
+            assert c["norm_conf"] == 1.0
+            assert c["score_confianza"] >= 0.8
+
+    def test_autofill_preserves_edited(self, autofill_doc_id):
+        fresh_doc_id = autofill_doc_id
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t = r.json()["tablas"][0]
+        table_id = t["id"]
+        date_cols = [i for i, x in enumerate(t["column_types"]) if x == "date"]
+        assert date_cols
+        col = date_cols[0]
+        # edit the first cell of the column
+        edit = {"table_id": table_id, "fila": 0, "columna": col, "valor": "EDITED_DATE_VAL"}
+        re = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/cell", headers=HEADERS, json=edit, timeout=30)
+        assert re.status_code == 200
+        r2 = requests.post(f"{BASE_URL}/api/documents/{fresh_doc_id}/date-autofill",
+                           headers=HEADERS, json={"table_id": table_id, "columna": col}, timeout=30)
+        assert r2.status_code == 200
+        r3 = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t3 = next(x for x in r3.json()["tablas"] if x["id"] == table_id)
+        edited = next(c for c in t3["cells"] if c["fila"] == 0 and c["columna"] == col)
+        assert edited["valor"] == "EDITED_DATE_VAL"
+        assert edited.get("edited") is True
+
+    def test_autofill_requires_auth(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        table_id = r.json()["tablas"][0]["id"]
+        r2 = requests.post(f"{BASE_URL}/api/documents/{fresh_doc_id}/date-autofill",
+                           json={"table_id": table_id, "columna": 0}, timeout=30)
+        assert r2.status_code == 401
+
+    def test_autofill_unknown_table_404(self, fresh_doc_id):
+        r = requests.post(f"{BASE_URL}/api/documents/{fresh_doc_id}/date-autofill",
+                          headers=HEADERS, json={"table_id": "nope", "columna": 0}, timeout=30)
+        assert r.status_code == 404
+
+
+# --- New (iteration 4): PUT /column-rules ---
+class TestColumnRules:
+    def test_set_and_persist_rules(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t = r.json()["tablas"][0]
+        table_id = t["id"]
+        payload = {"table_id": table_id, "columna": 2, "rules": {"required": True, "min": 2, "max": 5}}
+        r2 = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/column-rules",
+                          headers=HEADERS, json=payload, timeout=30)
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["ok"] is True
+        assert body["column_rules"]["2"]["required"] is True
+        assert body["column_rules"]["2"]["min"] == 2
+        assert body["column_rules"]["2"]["max"] == 5
+        # persistence via GET document
+        r3 = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t3 = next(x for x in r3.json()["tablas"] if x["id"] == table_id)
+        assert t3.get("column_rules", {}).get("2", {}).get("min") == 2
+        assert t3["column_rules"]["2"]["max"] == 5
+        assert t3["column_rules"]["2"]["required"] is True
+
+    def test_empty_rule_removes(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        table_id = r.json()["tablas"][0]["id"]
+        # first set a rule
+        requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/column-rules",
+                     headers=HEADERS,
+                     json={"table_id": table_id, "columna": 3, "rules": {"required": True, "min": 1, "max": 9}},
+                     timeout=30)
+        # now clear it
+        r2 = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/column-rules",
+                          headers=HEADERS,
+                          json={"table_id": table_id, "columna": 3, "rules": {"required": False, "min": None, "max": None}},
+                          timeout=30)
+        assert r2.status_code == 200
+        assert "3" not in r2.json()["column_rules"]
+
+    def test_rules_requires_auth(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        table_id = r.json()["tablas"][0]["id"]
+        r2 = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/column-rules",
+                         json={"table_id": table_id, "columna": 0, "rules": {"required": True}}, timeout=30)
+        assert r2.status_code == 401
+
+    def test_rules_unknown_table_404(self, fresh_doc_id):
+        r = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/column-rules",
+                         headers=HEADERS,
+                         json={"table_id": "nope", "columna": 0, "rules": {"required": True}}, timeout=30)
+        assert r.status_code == 404
+

@@ -40,10 +40,13 @@ Web app to extract tables from PDFs (including scanned) into validated Excel/CSV
 - Per-document metrics panel: % and counts of green/amber/red cells, stacked bar, and doubtful-remaining indicator (recomputes live).
 - Reprocess-with-OCR: POST /api/documents/{id}/reprocess?mode=ocr forces Tesseract OCR on every page of the stored PDF and replaces the tables (extraction_method='ocr').
 
-## Backlog / Remaining (P2)
-- Robustness of OCR table reconstruction for complex scanned layouts.
-- Confidence breakdown for OCR crops on multi-word cells.
-- Optional: real payments/accounts if productized beyond demo.
+## Iteration 4 (2026-09-20) — 3 features added, tested (backend 44/44, frontend 100%)
+- Auto-fill dates: POST /api/documents/{id}/date-autofill detects the source date format of a column and reparses all originals to ISO (resolves ambiguous date cells); undoable.
+- Per-column validation rules (required / numeric min-max): PUT /api/documents/{id}/column-rules persists rules; violations render red + warning icon and count as doubtful in metrics; undoable.
+- Compare original: hovering an edited cell shows original (strikethrough) → corrected.
+
+## Pending — Google Sheets export (P1, needs credentials)
+- Requires a Google Cloud OAuth client (GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET) with Sheets API enabled and redirect URI https://pdf-to-excel-178.preview.emergentagent.com/api/oauth/sheets/callback. Playbook obtained; implementation blocked until user provides credentials.
 
 ## Iteration 2 (2026-09-20) — 4 features added, tested (backend 29/29, frontend 100%)
 - Real pdf.js page thumbnails in the upload dropzone (client-side).
