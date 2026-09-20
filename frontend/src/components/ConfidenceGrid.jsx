@@ -244,7 +244,8 @@ export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful, onColumnTypeCh
                     data-score={score}
                     tabIndex={dim ? -1 : 0}
                     className={`group relative border align-middle outline-none data-cell ${confClass(score)} ${dim ? "conf-dimmed" : ""} ${isSel && !isEditing ? "z-20 ring-2 ring-inset ring-primary" : "border-transparent"}`}
-                    onClick={() => !isEditing && !dim && beginEdit(r, c)}
+                    onClick={() => !isEditing && !dim && selectCell(r, c)}
+                    onDoubleClick={() => !dim && beginEdit(r, c)}
                     onFocus={() => { if (!isDim(r, c)) setSel({ r, c }); }}
                     onKeyDown={(e) => onTdKeyDown(e, r, c)}
                   >

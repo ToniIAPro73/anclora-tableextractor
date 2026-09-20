@@ -355,6 +355,115 @@ class TestBatchExport:
         assert r.status_code == 400
 
 
+# --- New (iteration 3): PUT /cell-state (undo/redo backend) ---
+class TestCellState:
+    def test_set_cell_state_roundtrip(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t = r.json()["tablas"][0]
+        table_id = t["id"]
+        # pick fila=0, columna=1
+        orig = next(c for c in t["cells"] if c["fila"] == 0 and c["columna"] == 1)
+        # set an explicit cell-state (simulating redo of an edit)
+        payload = {
+            "table_id": table_id, "fila": 0, "columna": 1,
+            "valor": "CELLSTATE_X", "score_confianza": 1.0, "edited": True,
+            "norm_conf": 1.0, "reason_code": "high",
+        }
+        r2 = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/cell-state", headers=HEADERS, json=payload, timeout=30)
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["ok"] is True
+        assert body["cell"]["valor"] == "CELLSTATE_X"
+        assert body["cell"]["edited"] is True
+        assert body["cell"]["score_confianza"] == 1.0
+        # confirm persistence
+        r3 = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t3 = next(x for x in r3.json()["tablas"] if x["id"] == table_id)
+        cell = next(c for c in t3["cells"] if c["fila"] == 0 and c["columna"] == 1)
+        assert cell["valor"] == "CELLSTATE_X"
+        assert cell["edited"] is True
+        assert cell["score_confianza"] == 1.0
+        assert cell.get("reason_code") == "high"
+        # now restore original (simulating undo)
+        restore = {
+            "table_id": table_id, "fila": 0, "columna": 1,
+            "valor": orig["valor"], "score_confianza": orig["score_confianza"],
+            "edited": bool(orig.get("edited", False)),
+            "norm_conf": orig.get("norm_conf", orig["score_confianza"]),
+            "reason_code": orig.get("reason_code", ""),
+        }
+        r4 = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/cell-state", headers=HEADERS, json=restore, timeout=30)
+        assert r4.status_code == 200
+        r5 = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        t5 = next(x for x in r5.json()["tablas"] if x["id"] == table_id)
+        cell5 = next(c for c in t5["cells"] if c["fila"] == 0 and c["columna"] == 1)
+        assert cell5["valor"] == orig["valor"]
+        assert bool(cell5.get("edited", False)) == bool(orig.get("edited", False))
+
+    def test_cell_state_requires_auth(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        table_id = r.json()["tablas"][0]["id"]
+        payload = {"table_id": table_id, "fila": 0, "columna": 0, "valor": "x",
+                   "score_confianza": 1.0, "edited": True}
+        r2 = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/cell-state", json=payload, timeout=30)
+        assert r2.status_code == 401
+
+    def test_cell_state_unknown_table_404(self, fresh_doc_id):
+        payload = {"table_id": "does-not-exist", "fila": 0, "columna": 0, "valor": "x",
+                   "score_confianza": 1.0, "edited": True}
+        r = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/cell-state", headers=HEADERS, json=payload, timeout=30)
+        assert r.status_code == 404
+
+    def test_cell_state_unknown_cell_404(self, fresh_doc_id):
+        r = requests.get(f"{BASE_URL}/api/documents/{fresh_doc_id}", headers=HEADERS, timeout=30)
+        table_id = r.json()["tablas"][0]["id"]
+        payload = {"table_id": table_id, "fila": 999, "columna": 999, "valor": "x",
+                   "score_confianza": 1.0, "edited": True}
+        r2 = requests.put(f"{BASE_URL}/api/documents/{fresh_doc_id}/cell-state", headers=HEADERS, json=payload, timeout=30)
+        assert r2.status_code == 404
+
+
+# --- New (iteration 3): POST /reprocess?mode=ocr ---
+class TestReprocessOcr:
+    def test_reprocess_forces_ocr_method(self):
+        # upload a fresh native-invoice, then reprocess w/ mode=ocr
+        with open(SAMPLE_PDF, "rb") as f:
+            up = requests.post(
+                f"{BASE_URL}/api/documents/upload?lang=es",
+                headers=HEADERS,
+                files={"files": ("reproc.pdf", f, "application/pdf")},
+                timeout=120,
+            )
+        assert up.status_code == 200
+        did = up.json()["documents"][0]["id"]
+        try:
+            # validate to flip estado away from pendiente so we can check it resets
+            requests.post(f"{BASE_URL}/api/documents/{did}/validate", headers=HEADERS, timeout=30)
+            r = requests.post(f"{BASE_URL}/api/documents/{did}/reprocess?mode=ocr&lang=es",
+                              headers=HEADERS, timeout=180)
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["ok"] is True
+            assert body["mode"] == "ocr"
+            assert body["num_tablas"] >= 1
+            # verify estado reset + method='ocr'
+            d = requests.get(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30).json()
+            assert d["documento"]["estado"] == "pendiente"
+            methods = [t.get("extraction_method") for t in d["tablas"]]
+            assert methods, "no tables after reprocess"
+            assert all(m == "ocr" for m in methods), f"expected all 'ocr', got {methods}"
+        finally:
+            requests.delete(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30)
+
+    def test_reprocess_requires_auth(self, fresh_doc_id):
+        r = requests.post(f"{BASE_URL}/api/documents/{fresh_doc_id}/reprocess?mode=ocr", timeout=30)
+        assert r.status_code == 401
+
+    def test_reprocess_unknown_doc_404(self):
+        r = requests.post(f"{BASE_URL}/api/documents/no-such-doc/reprocess?mode=ocr", headers=HEADERS, timeout=30)
+        assert r.status_code == 404
+
+
 # --- New: multi-page PDF still processes ---
 class TestMultiPage:
     def test_multi_upload(self):

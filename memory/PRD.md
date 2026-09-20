@@ -34,13 +34,16 @@ Web app to extract tables from PDFs (including scanned) into validated Excel/CSV
 - xlsx/csv/json export with page + score metadata; validate & status transitions.
 - Google Auth, history, i18n (ES/EN), theme system (dark/light/system) with FOUC prevention.
 
-## Backlog / Remaining
-- **P2**: Batch export across multiple documents — DONE (2026-09-20).
-- **P2**: Column-type override per column in the grid — DONE (2026-09-20).
-- **P1**: PDF page thumbnails in upload — DONE (2026-09-20).
-- **P1**: Confidence breakdown popover (page/bbox crop/scores) — DONE (2026-09-20).
-- **P2**: Robustness of OCR table reconstruction for complex scanned layouts.
-- **P2**: Undo/redo and keyboard Tab-to-next-cell navigation in the grid.
+## Iteration 3 (2026-09-20) — 4 features added, tested (backend 36/36, frontend 100%)
+- Keyboard navigation in the review grid: single-click selects, arrows move, Enter/double-click edits; Enter commits + moves down (stays editing), Tab commits + moves right, Esc cancels.
+- Undo/Redo for cell edits and column-type changes (toolbar buttons + Ctrl+Z / Ctrl+Shift+Z), backed by PUT /api/documents/{id}/cell-state and deterministic column-type re-apply.
+- Per-document metrics panel: % and counts of green/amber/red cells, stacked bar, and doubtful-remaining indicator (recomputes live).
+- Reprocess-with-OCR: POST /api/documents/{id}/reprocess?mode=ocr forces Tesseract OCR on every page of the stored PDF and replaces the tables (extraction_method='ocr').
+
+## Backlog / Remaining (P2)
+- Robustness of OCR table reconstruction for complex scanned layouts.
+- Confidence breakdown for OCR crops on multi-word cells.
+- Optional: real payments/accounts if productized beyond demo.
 
 ## Iteration 2 (2026-09-20) — 4 features added, tested (backend 29/29, frontend 100%)
 - Real pdf.js page thumbnails in the upload dropzone (client-side).

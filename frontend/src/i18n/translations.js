@@ -97,7 +97,7 @@ export const translations = {
       cells: "celdas",
       undo: "Deshacer",
       redo: "Rehacer",
-      keyboardHint: "Flechas para navegar · Enter/Tab para editar",
+      keyboardHint: "Flechas para navegar · doble clic o Enter para editar",
     },
     exportPanel: {
       title: "Exportar documento",
@@ -241,7 +241,7 @@ export const translations = {
       cells: "cells",
       undo: "Undo",
       redo: "Redo",
-      keyboardHint: "Arrows to navigate · Enter/Tab to edit",
+      keyboardHint: "Arrows to navigate · double-click or Enter to edit",
     },
     exportPanel: {
       title: "Export document",
