@@ -205,6 +205,118 @@ class TestPdfFile:
         assert r.status_code == 404
 
 
+# --- New (iteration 5): Object storage backing for PDF files ---
+class TestObjectStorage:
+    def _get_pdf_files_doc(self, doc_id):
+        out = subprocess.run(
+            ["mongosh", "--quiet", "--json=canonical", "--eval",
+             f"use('test_database'); printjson(db.pdf_files.findOne({{documento_id:'{doc_id}'}}));"],
+            capture_output=True, text=True, timeout=30,
+        )
+        return out.stdout
+
+    def test_upload_stores_reference_in_object_storage(self):
+        with open(SAMPLE_PDF, "rb") as f:
+            up = requests.post(
+                f"{BASE_URL}/api/documents/upload?lang=es",
+                headers=HEADERS,
+                files={"files": ("obj_store.pdf", f, "application/pdf")},
+                timeout=120,
+            )
+        assert up.status_code == 200, up.text
+        did = up.json()["documents"][0]["id"]
+        try:
+            raw = self._get_pdf_files_doc(did)
+            # storage_path must be present with expected prefix and no raw data blob
+            assert "storage_path" in raw, f"pdf_files ref missing storage_path: {raw}"
+            assert "anclora-tableextract/uploads/test-user-fixed/" in raw, raw
+            assert "original_filename" in raw and "obj_store.pdf" in raw
+            assert "content_type" in raw and "application/pdf" in raw
+            # NO raw 'data' blob in the reference doc
+            assert '"data"' not in raw and "BinData(" not in raw and "Binary(" not in raw, (
+                f"unexpected raw data blob in pdf_files ref: {raw[:400]}"
+            )
+            # size field matches uploaded PDF (2081 bytes)
+            expected_size = os.path.getsize(SAMPLE_PDF)
+            assert "size" in raw and str(expected_size) in raw, raw
+            # /file returns the exact bytes
+            r = requests.get(f"{BASE_URL}/api/documents/{did}/file", headers=HEADERS, timeout=30)
+            assert r.status_code == 200
+            assert r.headers.get("content-type", "").startswith("application/pdf")
+            assert len(r.content) == expected_size, f"served {len(r.content)} vs uploaded {expected_size}"
+            assert r.content[:4] == b"%PDF"
+        finally:
+            requests.delete(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30)
+
+    def test_reprocess_loads_from_object_storage(self):
+        with open(SAMPLE_PDF, "rb") as f:
+            up = requests.post(
+                f"{BASE_URL}/api/documents/upload?lang=es",
+                headers=HEADERS,
+                files={"files": ("obj_reproc.pdf", f, "application/pdf")},
+                timeout=120,
+            )
+        assert up.status_code == 200
+        did = up.json()["documents"][0]["id"]
+        try:
+            r = requests.post(f"{BASE_URL}/api/documents/{did}/reprocess?mode=ocr&lang=es",
+                              headers=HEADERS, timeout=180)
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body.get("ok") is True
+            assert body.get("mode") == "ocr"
+            assert body.get("num_tablas", 0) >= 1
+            d = requests.get(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30).json()
+            methods = [t.get("extraction_method") for t in d["tablas"]]
+            assert methods and all(m == "ocr" for m in methods), methods
+        finally:
+            requests.delete(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30)
+
+    def test_cross_user_cannot_read_file(self):
+        # seed a secondary user session
+        subprocess.run([
+            "mongosh", "--quiet", "--eval",
+            "use('test_database'); db.users.updateOne({user_id:'other-user'},{$set:{user_id:'other-user',email:'o@x.com',name:'Other',picture:'',created_at:new Date().toISOString()}},{upsert:true}); db.user_sessions.updateOne({session_token:'other_session'},{$set:{user_id:'other-user',session_token:'other_session',expires_at:new Date(Date.now()+86400000).toISOString(),created_at:new Date().toISOString()}},{upsert:true});"
+        ], check=False, capture_output=True)
+        with open(SAMPLE_PDF, "rb") as f:
+            up = requests.post(
+                f"{BASE_URL}/api/documents/upload?lang=es",
+                headers=HEADERS,
+                files={"files": ("secret.pdf", f, "application/pdf")},
+                timeout=120,
+            )
+        assert up.status_code == 200
+        did = up.json()["documents"][0]["id"]
+        try:
+            r = requests.get(f"{BASE_URL}/api/documents/{did}/file",
+                             headers={"Authorization": "Bearer other_session"}, timeout=30)
+            assert r.status_code in (401, 403, 404), f"cross-user got {r.status_code}"
+        finally:
+            requests.delete(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30)
+
+    def test_delete_removes_pdf_files_reference(self):
+        with open(SAMPLE_PDF, "rb") as f:
+            up = requests.post(
+                f"{BASE_URL}/api/documents/upload?lang=es",
+                headers=HEADERS,
+                files={"files": ("to_delete.pdf", f, "application/pdf")},
+                timeout=120,
+            )
+        assert up.status_code == 200
+        did = up.json()["documents"][0]["id"]
+        # ensure ref exists
+        raw_before = self._get_pdf_files_doc(did)
+        assert "storage_path" in raw_before
+        # delete
+        r = requests.delete(f"{BASE_URL}/api/documents/{did}", headers=HEADERS, timeout=30)
+        assert r.status_code in (200, 204)
+        raw_after = self._get_pdf_files_doc(did)
+        assert "storage_path" not in raw_after, f"pdf_files ref not removed: {raw_after}"
+        # /file must be 404
+        rf = requests.get(f"{BASE_URL}/api/documents/{did}/file", headers=HEADERS, timeout=30)
+        assert rf.status_code == 404
+
+
 # --- New: enriched cell metadata (bbox, extraction_conf, norm_conf, reason_code) ---
 class TestCellMetadata:
     def test_cell_shape(self, fresh_doc_id):
