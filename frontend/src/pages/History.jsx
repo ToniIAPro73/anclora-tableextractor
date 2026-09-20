@@ -1,17 +1,20 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { History as HistoryIcon, FileText, Trash2, ArrowRight, Loader2, UploadCloud } from "lucide-react";
+import { History as HistoryIcon, FileText, Trash2, ArrowRight, Loader2, UploadCloud, Sheet, FileJson, X, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Header } from "@/components/Header";
 import { StatusBadge } from "@/pages/Review";
 import { useLang } from "@/contexts/LangContext";
 import { api } from "@/lib/api";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export default function HistoryPage() {
   const { t, lang } = useLang();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [docs, setDocs] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [batchLoading, setBatchLoading] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -27,11 +30,46 @@ export default function HistoryPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const toggle = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setSelected((prev) => (prev.size === docs.length ? new Set() : new Set(docs.map((d) => d.id))));
+  };
+
+  const batchExport = async (format) => {
+    setBatchLoading(format);
+    try {
+      const res = await api.post("/documents/export-batch", { doc_ids: Array.from(selected), format }, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = format === "xlsx" ? "anclora_export.xlsx" : `anclora_export_${format}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      setDocs((prev) => prev.map((d) => (selected.has(d.id) ? { ...d, estado: "exportado" } : d)));
+      toast.success(t("toast.batchExported"));
+      setSelected(new Set());
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || t("toast.error"));
+    } finally {
+      setBatchLoading(null);
+    }
+  };
+
   const remove = async (id) => {
     if (!window.confirm(t("history.deleteConfirm"))) return;
     try {
       await api.delete(`/documents/${id}`);
       setDocs((prev) => prev.filter((d) => d.id !== id));
+      setSelected((prev) => { const n = new Set(prev); n.delete(id); return n; });
       toast.success(t("toast.deleted"));
     } catch (e) {
       toast.error(t("toast.error"));
@@ -71,11 +109,49 @@ export default function HistoryPage() {
             </button>
           </div>
         ) : (
-          <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-card fade-up">
+          <>
+            {selected.size > 0 && (
+              <div data-testid="batch-export-bar" className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/40 bg-primary/5 p-4 fade-up">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Download className="h-4 w-4 text-primary" />
+                  {selected.size} {t("history.selected")}
+                  <button data-testid="clear-selection-button" onClick={() => setSelected(new Set())} className="ml-2 flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+                    <X className="h-3 w-3" /> {t("history.clearSelection")}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { fmt: "xlsx", label: t("history.batchExportXlsx"), icon: Sheet },
+                    { fmt: "csv", label: t("history.batchExportCsv"), icon: FileText },
+                    { fmt: "json", label: t("history.batchExportJson"), icon: FileJson },
+                  ].map(({ fmt, label, icon: Icon }) => (
+                    <button
+                      key={fmt}
+                      data-testid={`batch-export-${fmt}-button`}
+                      onClick={() => batchExport(fmt)}
+                      disabled={batchLoading !== null}
+                      className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition hover:opacity-95 active:scale-[0.98] disabled:opacity-60"
+                    >
+                      {batchLoading === fmt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-card fade-up">
             <div className="overflow-x-auto thin-scroll">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    <th className="px-4 py-3 w-10">
+                      <Checkbox
+                        data-testid="select-all-checkbox"
+                        checked={selected.size === docs.length && docs.length > 0}
+                        onCheckedChange={toggleAll}
+                        aria-label={t("history.selectAll")}
+                      />
+                    </th>
                     <th className="px-4 py-3">{t("history.name")}</th>
                     <th className="px-4 py-3">{t("history.date")}</th>
                     <th className="px-4 py-3 text-center">{t("history.pages")}</th>
@@ -86,7 +162,15 @@ export default function HistoryPage() {
                 </thead>
                 <tbody>
                   {docs.map((d) => (
-                    <tr key={d.id} data-testid={`history-row-${d.id}`} className="border-b border-border last:border-0 hover:bg-muted/30">
+                    <tr key={d.id} data-testid={`history-row-${d.id}`} className={`border-b border-border last:border-0 hover:bg-muted/30 ${selected.has(d.id) ? "bg-primary/5" : ""}`}>
+                      <td className="px-4 py-3">
+                        <Checkbox
+                          data-testid={`select-doc-${d.id}`}
+                          checked={selected.has(d.id)}
+                          onCheckedChange={() => toggle(d.id)}
+                          aria-label="select"
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2.5">
                           <FileText className="h-4 w-4 shrink-0 text-red-500" />
@@ -121,6 +205,7 @@ export default function HistoryPage() {
               </table>
             </div>
           </div>
+          </>
         )}
       </main>
     </div>

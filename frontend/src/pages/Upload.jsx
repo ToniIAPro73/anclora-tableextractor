@@ -1,10 +1,11 @@
 import React, { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { UploadCloud, FileText, X, Loader2, CheckCircle2, AlertCircle, Table2, ArrowRight } from "lucide-react";
+import { UploadCloud, FileText, X, Loader2, CheckCircle2, AlertCircle, Table2, ArrowRight, Images } from "lucide-react";
 import { toast } from "sonner";
 import { Header } from "@/components/Header";
 import { useLang } from "@/contexts/LangContext";
 import { api } from "@/lib/api";
+import { renderThumbnails } from "@/lib/pdf";
 
 const fmtSize = (b) => {
   if (b < 1024) return `${b} B`;
@@ -20,6 +21,7 @@ export default function Upload() {
   const [files, setFiles] = useState([]);
   const [processing, setProcessing] = useState(false);
   const [results, setResults] = useState([]);
+  const [thumbs, setThumbs] = useState({}); // id -> {loading, numPages, images}
 
   const addFiles = useCallback((list) => {
     const pdfs = Array.from(list).filter((f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
@@ -27,8 +29,18 @@ export default function Upload() {
       toast.error(lang === "es" ? "Solo se admiten archivos PDF" : "Only PDF files are supported");
       return;
     }
-    setFiles((prev) => [...prev, ...pdfs.map((f) => ({ file: f, id: `${f.name}-${f.size}-${Date.now()}-${Math.random()}` }))]);
+    const items = pdfs.map((f) => ({ file: f, id: `${f.name}-${f.size}-${Date.now()}-${Math.random()}` }));
+    setFiles((prev) => [...prev, ...items]);
     setResults([]);
+    items.forEach(async (it) => {
+      setThumbs((prev) => ({ ...prev, [it.id]: { loading: true, images: [], numPages: 0 } }));
+      try {
+        const { numPages, thumbs: imgs } = await renderThumbnails(it.file);
+        setThumbs((prev) => ({ ...prev, [it.id]: { loading: false, images: imgs, numPages } }));
+      } catch (e) {
+        setThumbs((prev) => ({ ...prev, [it.id]: { loading: false, images: [], numPages: 0 } }));
+      }
+    });
   }, [lang]);
 
   const onDrop = (e) => {
@@ -118,23 +130,63 @@ export default function Upload() {
               </button>
             </div>
             <div className="space-y-2">
-              {files.map((f) => (
-                <div key={f.id} data-testid="queue-item" className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-500/10">
-                    <FileText className="h-5 w-5 text-red-500" strokeWidth={1.7} />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{f.file.name}</p>
-                    <p className="text-xs text-muted-foreground">{fmtSize(f.file.size)}</p>
+              {files.map((f) => {
+                const th = thumbs[f.id] || { loading: true, images: [], numPages: 0 };
+                return (
+                <div key={f.id} data-testid="queue-item" className="rounded-xl border border-border bg-card px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-500/10">
+                      <FileText className="h-5 w-5 text-red-500" strokeWidth={1.7} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{f.file.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {fmtSize(f.file.size)}
+                        {th.numPages > 0 && ` · ${th.numPages} ${t("upload.pages")}`}
+                      </p>
+                    </div>
+                    {!processing && (
+                      <button data-testid="remove-file-button" onClick={() => removeFile(f.id)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-destructive">
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                    {processing && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
                   </div>
-                  {!processing && (
-                    <button data-testid="remove-file-button" onClick={() => removeFile(f.id)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-destructive">
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
-                  {processing && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+
+                  {/* Page thumbnails */}
+                  <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
+                    <Images className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    {th.loading ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("upload.preview")}…
+                      </div>
+                    ) : th.images.length === 0 ? (
+                      <span className="text-xs text-muted-foreground">{t("upload.preview")}: —</span>
+                    ) : (
+                      <div className="flex gap-2 overflow-x-auto thin-scroll" data-testid={`thumbs-${f.id}`}>
+                        {th.images.map((src, pi) => (
+                          <div key={pi} className="group relative shrink-0">
+                            <img
+                              src={src}
+                              alt={`p${pi + 1}`}
+                              className="h-24 w-auto rounded-md border border-border bg-white shadow-sm transition group-hover:ring-2 group-hover:ring-primary"
+                            />
+                            <span className="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                              {t("upload.page")} {pi + 1}
+                            </span>
+                          </div>
+                        ))}
+                        {th.numPages > th.images.length && (
+                          <div className="flex h-24 shrink-0 items-center rounded-md border border-dashed border-border px-3 text-xs text-muted-foreground">
+                            +{th.numPages - th.images.length} {t("upload.morePages")}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

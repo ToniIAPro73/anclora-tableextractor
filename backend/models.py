@@ -30,6 +30,10 @@ class Cell(BaseModel):
     valor_original: str = ""
     score_confianza: float = 1.0
     pagina: int = 1
+    extraction_conf: float = 0.9
+    norm_conf: float = 1.0
+    bbox: Optional[List[float]] = None
+    reason_code: str = "high"
     edited: bool = False
 
 
@@ -65,3 +69,14 @@ class CellUpdate(BaseModel):
     fila: int
     columna: int
     valor: str
+
+
+class ColumnTypeUpdate(BaseModel):
+    table_id: str
+    columna: int
+    tipo: str  # date | number | text
+
+
+class BatchExport(BaseModel):
+    doc_ids: List[str]
+    format: str = "xlsx"  # xlsx | csv | json

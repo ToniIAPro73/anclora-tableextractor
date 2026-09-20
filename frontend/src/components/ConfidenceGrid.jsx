@@ -1,5 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, Info, ChevronDown, Calendar, Hash, Type as TypeIcon, Loader2 } from "lucide-react";
+import { useLang } from "@/contexts/LangContext";
+import { renderCrop } from "@/lib/pdf";
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export const confClass = (score) => {
   if (score >= 0.9) return "conf-green";
@@ -7,11 +15,125 @@ export const confClass = (score) => {
   return "conf-red";
 };
 
-const cellAt = (table, r, c) =>
-  table.cells.find((x) => x.fila === r && x.columna === c) || null;
+const cellAt = (table, r, c) => table.cells.find((x) => x.fila === r && x.columna === c) || null;
 
-export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful }) => {
-  const [editing, setEditing] = useState(null); // {r, c}
+const TYPE_ICONS = { date: Calendar, number: Hash, text: TypeIcon };
+
+const CellDetail = ({ cell, method, pdf, t }) => {
+  const [crop, setCrop] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [tried, setTried] = useState(false);
+  const pct = (v) => `${Math.round((v ?? 0) * 100)}%`;
+
+  const onOpen = async (open) => {
+    if (!open || tried || !pdf || !cell.bbox) return;
+    setTried(true);
+    setLoading(true);
+    try {
+      const url = await renderCrop(pdf, cell.pagina, cell.bbox);
+      setCrop(url);
+    } catch (e) { /* noop */ } finally { setLoading(false); }
+  };
+
+  return (
+    <Popover onOpenChange={onOpen}>
+      <PopoverTrigger asChild>
+        <button
+          data-testid={`cell-detail-button-${cell.fila}-${cell.columna}`}
+          className="rounded p-0.5 text-current opacity-60 transition hover:opacity-100"
+          onClick={(e) => e.stopPropagation()}
+          title={t("review.detailTitle")}
+        >
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72" data-testid="cell-detail-popover">
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className={`h-2.5 w-2.5 rounded-full ${confClass(cell.score_confianza)}`} />
+            <h4 className="text-sm font-semibold">{t("review.detailTitle")}</h4>
+          </div>
+          <p className="text-xs text-muted-foreground">{t(`review.reasons.${cell.reason_code || "high"}`)}</p>
+
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <Stat label={t("review.score")} value={pct(cell.score_confianza)} />
+            <Stat label={t("review.page")} value={cell.pagina} />
+            <Stat label={t("review.extractionConf")} value={pct(cell.extraction_conf)} />
+            <Stat label={t("review.normConf")} value={pct(cell.norm_conf)} />
+            <Stat label={t("review.method")} value={method === "ocr" ? "OCR" : t("review.native")} />
+            <Stat label={t("review.original")} value={cell.valor_original || "—"} mono />
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("review.cropLabel")}</p>
+            {loading ? (
+              <div className="flex h-16 items-center justify-center rounded-md border border-border bg-muted/40">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              </div>
+            ) : crop ? (
+              <img src={crop} alt="crop" data-testid="cell-crop-image" className="max-h-28 w-full rounded-md border border-border bg-white object-contain" />
+            ) : (
+              <div className="flex h-14 items-center justify-center rounded-md border border-dashed border-border text-[11px] text-muted-foreground">
+                {t("review.noCrop")}
+              </div>
+            )}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+};
+
+const Stat = ({ label, value, mono }) => (
+  <div className="rounded-md bg-muted/50 px-2 py-1.5">
+    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+    <p className={`truncate text-xs font-semibold ${mono ? "font-mono" : ""}`}>{value}</p>
+  </div>
+);
+
+const ColumnTypeMenu = ({ table, colIdx, onColumnTypeChange, t }) => {
+  const current = table.column_types?.[colIdx] || "text";
+  const opts = [
+    { key: "date", label: t("review.typeDate"), icon: Calendar },
+    { key: "number", label: t("review.typeNumber"), icon: Hash },
+    { key: "text", label: t("review.typeText"), icon: TypeIcon },
+  ];
+  const CurIcon = TYPE_ICONS[current] || TypeIcon;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          data-testid={`column-type-button-${table.id}-${colIdx}`}
+          onClick={(e) => e.stopPropagation()}
+          className="ml-1.5 inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-normal text-primary/80 transition hover:bg-primary/20"
+          title={t("review.changeType")}
+        >
+          <CurIcon className="h-3 w-3" /> {current}
+          <ChevronDown className="h-3 w-3" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {opts.map((o) => {
+          const Icon = o.icon;
+          return (
+            <DropdownMenuItem
+              key={o.key}
+              data-testid={`column-type-option-${table.id}-${colIdx}-${o.key}`}
+              onClick={() => o.key !== current && onColumnTypeChange(table.id, colIdx, o.key)}
+              className={`gap-2 cursor-pointer ${o.key === current ? "text-primary font-semibold" : ""}`}
+            >
+              <Icon className="h-4 w-4" /> {o.label}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
+
+export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful, onColumnTypeChange, pdf }) => {
+  const { t } = useLang();
+  const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef(null);
 
@@ -22,18 +144,13 @@ export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful }) => {
     }
   }, [editing]);
 
-  const startEdit = (r, c, value) => {
-    setEditing({ r, c });
-    setDraft(value ?? "");
-  };
+  const startEdit = (r, c, value) => { setEditing({ r, c }); setDraft(value ?? ""); };
 
   const commit = async () => {
     if (!editing) return;
     const { r, c } = editing;
     const current = cellAt(table, r, c);
-    if (current && draft !== current.valor) {
-      await onCellSave(table.id, r, c, draft);
-    }
+    if (current && draft !== current.valor) await onCellSave(table.id, r, c, draft);
     setEditing(null);
   };
 
@@ -50,10 +167,10 @@ export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful }) => {
             <th className="sticky left-0 z-10 border-b border-r border-border bg-muted/80 px-3 py-2 text-left text-xs font-semibold text-muted-foreground">#</th>
             {table.columnas.map((col, ci) => (
               <th key={ci} className="border-b border-border px-3 py-2 text-left text-xs font-bold uppercase tracking-wide text-foreground/80 whitespace-nowrap">
-                {col}
-                {table.column_types?.[ci] && (
-                  <span className="ml-1.5 font-mono text-[10px] font-normal text-primary/70">{table.column_types[ci]}</span>
-                )}
+                <span className="inline-flex items-center">
+                  {col}
+                  <ColumnTypeMenu table={table} colIdx={ci} onColumnTypeChange={onColumnTypeChange} t={t} />
+                </span>
               </th>
             ))}
           </tr>
@@ -73,7 +190,7 @@ export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful }) => {
                     key={c}
                     data-testid={`cell-${table.id}-${r}-${c}`}
                     data-score={score}
-                    className={`group relative border border-transparent px-0 py-0 align-middle data-cell ${confClass(score)} ${dim ? "conf-dimmed" : ""}`}
+                    className={`group relative border border-transparent align-middle data-cell ${confClass(score)} ${dim ? "conf-dimmed" : ""}`}
                     onClick={() => !isEditing && !dim && startEdit(r, c, cell?.valor)}
                   >
                     {isEditing ? (
@@ -91,6 +208,11 @@ export const ConfidenceGrid = ({ table, onCellSave, onlyDoubtful }) => {
                         <span className="truncate">{cell?.valor}</span>
                         <span className="flex items-center gap-1">
                           {cell?.edited && <span className="h-1.5 w-1.5 rounded-full bg-primary" title="editado" />}
+                          {isDoubtful && !dim && cell && (
+                            <span onClick={(e) => e.stopPropagation()}>
+                              <CellDetail cell={cell} method={table.extraction_method} pdf={pdf} t={t} />
+                            </span>
+                          )}
                           {isDoubtful && !dim && (
                             <Pencil className="h-3 w-3 opacity-0 transition group-hover:opacity-70" />
                           )}

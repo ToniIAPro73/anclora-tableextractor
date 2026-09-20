@@ -1,8 +1,8 @@
 """Extraction layer: native (pdfplumber) with OCR fallback (Tesseract).
 
-Kept fully separate from schema validation. Produces raw rows with per-cell
-extraction confidence + origin page. Does NOT normalize (that is a later,
-deterministic layer) and never calls an LLM.
+Captures per-cell bounding boxes (in PDF points, top-left origin) and origin
+page so the review UI can render a crop of each doubtful cell. Never normalizes
+(that is a later deterministic layer) and never calls an LLM.
 """
 import logging
 
@@ -22,20 +22,25 @@ def _clean(v):
     return (v or "").strip()
 
 
-def _build_native_table(raw_rows, page_num):
-    """raw_rows: list[list[str|None]] from pdfplumber.extract_tables()"""
-    ncols = max((len(r) for r in raw_rows), default=0)
+def _build_native_table(table, page_num):
+    """table: a pdfplumber Table object (from page.find_tables())."""
+    grid = table.extract()
+    ncols = max((len(r) for r in grid), default=0)
     rows = []
-    for r in raw_rows:
+    for ri, text_row in enumerate(grid):
+        bbox_row = table.rows[ri].cells if ri < len(table.rows) else []
         row = []
         for c in range(ncols):
-            val = _clean(r[c]) if c < len(r) else ""
+            val = _clean(text_row[c]) if c < len(text_row) else ""
             has = bool(val)
+            bb = bbox_row[c] if c < len(bbox_row) else None
+            bbox = [round(float(x), 2) for x in bb] if bb else None
             row.append({
                 "value": val,
                 "original": val,
                 "extraction_conf": 0.98 if has else 0.5,
                 "page": page_num,
+                "bbox": bbox,
             })
         rows.append(row)
     return {"rows": rows, "ncols": ncols, "page": page_num, "method": "native"}
@@ -49,8 +54,8 @@ def _ocr_page(path, page_num, dpi=200):
     if not images:
         return None
     data = pytesseract.image_to_data(images[0], output_type=pytesseract.Output.DICT)
+    pt = 72.0 / dpi  # px -> PDF points
 
-    # group words into text lines
     lines = {}
     all_words = []
     for i in range(len(data["text"])):
@@ -65,6 +70,7 @@ def _ocr_page(path, page_num, dpi=200):
             "left": data["left"][i],
             "right": data["left"][i] + data["width"][i],
             "top": data["top"][i],
+            "bottom": data["top"][i] + data["height"][i],
             "conf": conf,
         }
         key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
@@ -74,7 +80,6 @@ def _ocr_page(path, page_num, dpi=200):
     if len(all_words) < 4:
         return None
 
-    # cluster column boundaries from word left positions
     lefts = sorted(w["left"] for w in all_words)
     widths = sorted(w["right"] - w["left"] for w in all_words)
     med_w = widths[len(widths) // 2] if widths else 40
@@ -100,21 +105,28 @@ def _ocr_page(path, page_num, dpi=200):
     for ws in ordered:
         cells = [None] * ncols
         confs = [None] * ncols
+        boxes = [None] * ncols
         for w in sorted(ws, key=lambda x: x["left"]):
             ci = col_of(w["left"])
             if cells[ci] is None:
                 cells[ci], confs[ci] = w["text"], w["conf"]
+                boxes[ci] = [w["left"], w["top"], w["right"], w["bottom"]]
             else:
                 cells[ci] += " " + w["text"]
                 confs[ci] = min(confs[ci], w["conf"])
+                b = boxes[ci]
+                boxes[ci] = [min(b[0], w["left"]), min(b[1], w["top"]), max(b[2], w["right"]), max(b[3], w["bottom"])]
         row = []
         for c in range(ncols):
             val = cells[c] or ""
+            bb = boxes[c]
+            bbox = [round(bb[0] * pt, 2), round(bb[1] * pt, 2), round(bb[2] * pt, 2), round(bb[3] * pt, 2)] if bb else None
             row.append({
                 "value": val,
                 "original": val,
                 "extraction_conf": round((confs[c] or 55) / 100.0, 3) if val else 0.4,
                 "page": page_num,
+                "bbox": bbox,
             })
         rows.append(row)
     return {"rows": rows, "ncols": ncols, "page": page_num, "method": "ocr"}
@@ -127,11 +139,12 @@ def extract_tables(path):
         num_pages = len(pdf.pages)
         for pidx, page in enumerate(pdf.pages, start=1):
             page_text = page.extract_text() or ""
-            found = page.extract_tables()
+            found = page.find_tables()
             if found:
-                for raw in found:
-                    if raw and len(raw) >= 1:
-                        tables.append(_build_native_table(raw, pidx))
+                for tb in found:
+                    grid = tb.extract()
+                    if grid and len(grid) >= 1:
+                        tables.append(_build_native_table(tb, pidx))
             elif len(page_text.strip()) < 15:
                 ocr = _ocr_page(path, pidx)
                 if ocr and ocr["rows"]:

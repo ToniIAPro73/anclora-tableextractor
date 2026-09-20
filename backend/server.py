@@ -14,11 +14,13 @@ from starlette.middleware.cors import CORSMiddleware
 from auth import auth_router, get_current_user
 from column_inference import infer_column_names
 from db import db
-from exporters import export_csv, export_json, export_xlsx
+from exporters import (export_batch_xlsx, export_batch_zip, export_csv,
+                       export_json, export_xlsx)
 from extraction import extract_tables, merge_multipage
-from models import CellUpdate, Documento, User, new_id, now_iso
+from models import (BatchExport, CellUpdate, ColumnTypeUpdate, Documento, User,
+                    new_id, now_iso)
 from normalization import infer_column_type, normalize_value
-from schema_validation import validate_table
+from schema_validation import build_cells, combine_confidence, reason_code
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -78,7 +80,7 @@ async def _process_document(user: User, filename: str, content: bytes, lang: str
         for r in data_rows:
             meta_row = []
             for c in range(ncols):
-                cell = r[c] if c < len(r) else {"value": "", "original": "", "extraction_conf": 0.5, "page": raw["page"]}
+                cell = r[c] if c < len(r) else {"value": "", "original": "", "extraction_conf": 0.5, "page": raw["page"], "bbox": None}
                 norm_val, norm_conf = normalize_value(cell["value"], column_types[c])
                 meta_row.append({
                     "value": norm_val,
@@ -86,10 +88,11 @@ async def _process_document(user: User, filename: str, content: bytes, lang: str
                     "extraction_conf": cell.get("extraction_conf", 0.9),
                     "norm_conf": norm_conf,
                     "page": cell.get("page", raw["page"]),
+                    "bbox": cell.get("bbox"),
                 })
             rows_meta.append(meta_row)
 
-        validated = validate_table(columnas, column_types, rows_meta)
+        cells = build_cells(columnas, column_types, rows_meta)
         table_id = new_id("tbl")
         table_doc = {
             "id": table_id,
@@ -98,11 +101,11 @@ async def _process_document(user: User, filename: str, content: bytes, lang: str
             "pagina_origen": raw["page"],
             "source_pages": raw.get("source_pages", [raw["page"]]),
             "extraction_method": raw["method"],
-            "columnas": validated.columnas,
-            "column_types": validated.column_types,
-            "num_filas": validated.num_filas,
-            "num_columnas": validated.num_columnas,
-            "cells": [c.model_dump() for c in validated.cells],
+            "columnas": columnas,
+            "column_types": column_types,
+            "num_filas": len(rows_meta),
+            "num_columnas": ncols,
+            "cells": [c.model_dump() for c in cells],
         }
         stored_tables.append(table_doc)
 
@@ -111,6 +114,12 @@ async def _process_document(user: User, filename: str, content: bytes, lang: str
     await db.documents.insert_one(doc.model_dump())
     if stored_tables:
         await db.tables.insert_many(stored_tables)
+    if len(content) <= 15_000_000:
+        await db.pdf_files.replace_one(
+            {"documento_id": doc.id},
+            {"documento_id": doc.id, "user_id": user.user_id, "data": content},
+            upsert=True,
+        )
     return doc
 
 
@@ -200,7 +209,82 @@ async def delete_document(doc_id: str, user: User = Depends(get_current_user)):
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
     await db.tables.delete_many({"documento_id": doc_id})
+    await db.pdf_files.delete_many({"documento_id": doc_id})
     return {"ok": True}
+
+
+@app.get("/api/documents/{doc_id}/file")
+async def get_document_file(doc_id: str, user: User = Depends(get_current_user)):
+    rec = await db.pdf_files.find_one({"documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(status_code=404, detail="PDF no disponible")
+    data = rec["data"]
+    if not isinstance(data, (bytes, bytearray)):
+        data = bytes(data)
+    return Response(content=data, media_type="application/pdf", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.put("/api/documents/{doc_id}/column-type")
+async def update_column_type(doc_id: str, upd: ColumnTypeUpdate, user: User = Depends(get_current_user)):
+    if upd.tipo not in ("date", "number", "text"):
+        raise HTTPException(status_code=400, detail="Tipo no válido")
+    table = await db.tables.find_one({"id": upd.table_id, "documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
+    if not table:
+        raise HTTPException(status_code=404, detail="Tabla no encontrada")
+
+    types = table.get("column_types", [])
+    while len(types) <= upd.columna:
+        types.append("text")
+    types[upd.columna] = upd.tipo
+
+    updated_cells = []
+    for cell in table["cells"]:
+        if cell["columna"] != upd.columna:
+            continue
+        if cell.get("edited"):
+            updated_cells.append(cell)
+            continue
+        norm_val, norm_conf = normalize_value(cell.get("valor_original", ""), upd.tipo)
+        has_value = bool(norm_val.strip())
+        ext = cell.get("extraction_conf", 0.9)
+        cell["valor"] = norm_val
+        cell["norm_conf"] = norm_conf
+        cell["score_confianza"] = combine_confidence(ext, norm_conf, has_value)
+        cell["reason_code"] = reason_code(upd.tipo, ext, norm_conf, has_value)
+        updated_cells.append(cell)
+
+    await db.tables.update_one({"id": upd.table_id}, {"$set": {"cells": table["cells"], "column_types": types}})
+    return {"ok": True, "column_types": types, "cells": updated_cells}
+
+
+@app.post("/api/documents/export-batch")
+async def export_batch(payload: BatchExport, user: User = Depends(get_current_user)):
+    if not payload.doc_ids:
+        raise HTTPException(status_code=400, detail="Selecciona al menos un documento")
+    items = []
+    for did in payload.doc_ids:
+        doc = await db.documents.find_one({"id": did, "user_id": user.user_id}, {"_id": 0})
+        if not doc:
+            continue
+        tables = await db.tables.find({"documento_id": did, "user_id": user.user_id}, {"_id": 0}).to_list(200)
+        items.append((doc, tables))
+    if not items:
+        raise HTTPException(status_code=404, detail="No se encontraron documentos")
+
+    if payload.format == "xlsx":
+        data = export_batch_xlsx(items)
+        media, ext = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+    elif payload.format in ("csv", "json"):
+        data = export_batch_zip(items, payload.format)
+        media, ext = "application/zip", "zip"
+    else:
+        raise HTTPException(status_code=400, detail="Formato no soportado")
+
+    ids = [d["id"] for d, _ in items]
+    await db.documents.update_many({"id": {"$in": ids}, "user_id": user.user_id}, {"$set": {"estado": "exportado"}})
+    return Response(content=data, media_type=media, headers={
+        "Content-Disposition": f'attachment; filename="anclora_export.{ext}"'
+    })
 
 
 @app.get("/api/documents/{doc_id}/export")

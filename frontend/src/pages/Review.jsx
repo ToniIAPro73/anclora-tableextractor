@@ -9,6 +9,7 @@ import { Header } from "@/components/Header";
 import { ConfidenceGrid, confClass } from "@/components/ConfidenceGrid";
 import { useLang } from "@/contexts/LangContext";
 import { api } from "@/lib/api";
+import { loadPdfFromDocId } from "@/lib/pdf";
 
 const countDoubtful = (tables) =>
   tables.reduce((acc, t) => acc + t.cells.filter((c) => c.score_confianza < 0.9).length, 0);
@@ -22,6 +23,7 @@ export default function Review() {
   const [tables, setTables] = useState([]);
   const [onlyDoubtful, setOnlyDoubtful] = useState(false);
   const [downloading, setDownloading] = useState(null);
+  const [pdf, setPdf] = useState(null);
 
   const load = useCallback(async () => {
     if (!docId) { setLoading(false); return; }
@@ -35,9 +37,33 @@ export default function Review() {
     } finally {
       setLoading(false);
     }
+    loadPdfFromDocId(docId).then(setPdf).catch(() => setPdf(null));
   }, [docId, t]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => () => { if (pdf) pdf.destroy?.(); }, [pdf]);
+
+  const handleColumnTypeChange = async (tableId, columna, tipo) => {
+    try {
+      const res = await api.put(`/documents/${docId}/column-type`, { table_id: tableId, columna, tipo });
+      const updatedById = {};
+      res.data.cells.forEach((c) => { updatedById[`${c.fila}-${c.columna}`] = c; });
+      setTables((prev) =>
+        prev.map((tb) =>
+          tb.id !== tableId ? tb : {
+            ...tb,
+            column_types: res.data.column_types,
+            cells: tb.cells.map((c) =>
+              c.columna === columna ? (updatedById[`${c.fila}-${c.columna}`] || c) : c
+            ),
+          }
+        )
+      );
+      toast.success(t("toast.typeChanged"));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || t("toast.error"));
+    }
+  };
 
   const handleCellSave = async (tableId, fila, columna, valor) => {
     try {
@@ -185,7 +211,7 @@ export default function Review() {
                       : `${t("review.page")}: ${table.pagina_origen}`}
                   </span>
                 </div>
-                <ConfidenceGrid table={table} onCellSave={handleCellSave} onlyDoubtful={onlyDoubtful} />
+                <ConfidenceGrid table={table} onCellSave={handleCellSave} onlyDoubtful={onlyDoubtful} onColumnTypeChange={handleColumnTypeChange} pdf={pdf} />
               </div>
             ))}
           </div>
