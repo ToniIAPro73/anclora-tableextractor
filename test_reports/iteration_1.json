@@ -1,0 +1,28 @@
+{
+  "summary": "Independent full-pass test of Anclora TableExtract. Backend: 15/15 pytest cases pass covering auth (bearer + missing/invalid), upload response shape, extraction+deterministic normalization (dates ISO, es-decimal 1.234,56 -> 1234.56, currency stripped), per-cell metadata (score_confianza, pagina, valor_original), cell edit (score->1.0, edited=true), validate (estado=validado), all 3 exports (xlsx/csv/json non-empty with page+confidence metadata, estado->exportado), history listing, user isolation (other user cannot see/read doc), and delete. Frontend: authenticated /upload dropzone, file input, process, review-result-button, /history (rows + review-doc links), /review/{id} renders 20 confidence cells with color legend, doubtful-counter, filter-doubtful, validate + 3 export buttons, theme toggle (dropdown -> Light removes .dark class), language toggle ES<->EN switches UI text immediately, preferences persist across reload under localStorage keys 'anclora_lang' / 'anclora_theme'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Sample PDF produces all cells at 0.98 confidence, so amber/red inline-edit UI flow could not be observed live in the browser (backend PUT /cell was verified via API). If desired, seed a lower-confidence fixture to end-to-end test the doubtful cell click->input->Enter flow.",
+    "OCR/scanned-PDF fallback not exercised (no scanned fixture available); pdfplumber native path fully covered.",
+    "Documentation says preferences persist in localStorage; keys are namespaced as 'anclora_lang' and 'anclora_theme' (not plain 'lang'/'theme') — verify this matches product spec if any external integration reads them."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Header: Authorization: Bearer test_session_fixed  |  user_id=test-user-fixed (seeded in test_database).",
+  "seed_data_creation": "Ensured/created users.test-user-fixed + user_sessions.test_session_fixed (7d expiry). Also seeded a secondary user 'other-user' with session 'other_session' to verify user-isolation.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend tests: run with `pytest /app/backend/tests/backend_test.py -n 0` (module-scoped upload fixture + delete test require serial execution; xdist -n 2 loadscope splits classes across workers and breaks the fixture reuse). Actual API response shapes: upload returns {documents:[...]}, list returns {documents:[...]}, detail returns {documento:{...}, tablas:[{id, columnas, column_types, cells:[{fila,columna,valor,valor_original,score_confianza,pagina,edited?}]}]}. CellUpdate payload uses fields fila/columna/valor (not row/col/value)."
+}

@@ -1,0 +1,23 @@
+{
+  "summary": "Independent regression + new-feature pass for iteration 2. Backend: 29/29 pytest cases pass (existing MVP flow + 4 new feature areas). New backend coverage added: PDF file storage/serving (GET /api/documents/{id}/file returns 200 + application/pdf + %PDF magic bytes, 401 without auth, 404 after DELETE), enriched cell metadata (bbox is null|list[4] of floats, extraction_conf/norm_conf/reason_code present with reason_code in {'',ocr_low,date_ambiguous,number_ambiguous,norm_ambiguous,high}), PUT /column-type (invalid tipo->400, text->date lowers non-edited cells to score<0.6 with reason_code=date_ambiguous, edited cells preserved untouched with score=1.0), POST /export-batch (empty->400, invalid format->400, xlsx returns single .xlsx workbook PK-magic, csv/json return application/zip with per-doc entries, all selected docs flipped to estado=exportado), multi-page PDF (3-page) processed with /file endpoint returning correct PDF. Frontend: authenticated Upload page renders 3 pdf.js page thumbnails inside data-testid thumbs-<id> for /tmp/multi.pdf; Review page for multi.pdf shows 6 column-type-button-* dropdowns and 21 cell-detail-button-* icons on doubtful cells; opening column-type dropdown -> data-testid ...-date renormalizes column (Concepto text->date turns all cells red with reason 'Formato de fecha ambiguo al normalizar'); cell-detail-popover renders confidence stats (49%), extraction 98%, normalization 50%, page, method, original value and a live pdf.js crop image (cell-crop-image, data:image/jpeg base64, 3547 chars) of the source region. History page shows select-all-checkbox, 7 select-doc-<id> checkboxes, batch-export-bar with xlsx/csv/json buttons; batch xlsx download succeeded (10255 bytes anclora_export.xlsx).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "After a successful batch export the History page appears to clear the selection and hide batch-export-bar immediately, so a second consecutive batch export requires reselecting docs. Consider keeping the selection until user explicitly clears it, so users can export the same set in multiple formats without re-checking rows.",
+    "TestBatchExport uses a class-scoped instance-method fixture which raises PytestRemovedIn10Warning. Non-blocking; convert to @classmethod or module-scope in a future cleanup.",
+    "Tests must be run serially (-n 0). The module-scoped upload fixture is incompatible with xdist loadscope splitting classes across workers. Documented for next agent."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (29/29)", "frontend": "100% (all 4 new feature flows verified end-to-end)"},
+  "test_credentials": "Header Authorization: Bearer test_session_fixed (user_id=test-user-fixed) or cookie session_token=test_session_fixed for domain pdf-to-excel-178.preview.emergentagent.com. Session pre-seeded in test_database. Secondary user other-user/other_session also seeded for isolation tests.",
+  "seed_data_creation": "None new; reused existing seeded sessions. Fresh docs uploaded/cleaned during tests are prefixed with sample_invoice/multi/batch_a/batch_b and deleted in fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run backend tests with: `pytest /app/backend/tests/backend_test.py -n 0 --junitxml=/app/test_reports/pytest/pytest_results.xml` (serial required). All new feature tests are in classes TestPdfFile, TestCellMetadata, TestColumnType, TestBatchExport, TestMultiPage. Frontend testids to rely on: thumbs-<queue_id>, column-type-button-<tableId>-<colIdx>, column-type-option-<tableId>-<colIdx>-<date|number|text>, cell-detail-button-<r>-<c>, cell-detail-popover, cell-crop-image, select-all-checkbox, select-doc-<id>, batch-export-bar, batch-export-{xlsx,csv,json}-button. Note: batch-export-bar hides after a successful download so trigger only one format per selection round.",
+  "rca of the issue": "No blocking issues found."
+}

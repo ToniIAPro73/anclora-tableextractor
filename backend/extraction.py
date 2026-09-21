@@ -1,0 +1,198 @@
+"""Extraction layer: native (pdfplumber) with OCR fallback (Tesseract).
+
+Captures per-cell bounding boxes (in PDF points, top-left origin) and origin
+page so the review UI can render a crop of each doubtful cell. Never normalizes
+(that is a later deterministic layer) and never calls an LLM.
+"""
+import logging
+
+import pdfplumber
+
+logger = logging.getLogger(__name__)
+
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+    _OCR_AVAILABLE = True
+except Exception:  # pragma: no cover
+    _OCR_AVAILABLE = False
+
+
+def _clean(v):
+    return (v or "").strip()
+
+
+def _build_native_table(table, page_num):
+    """table: a pdfplumber Table object (from page.find_tables())."""
+    grid = table.extract()
+    ncols = max((len(r) for r in grid), default=0)
+    rows = []
+    for ri, text_row in enumerate(grid):
+        bbox_row = table.rows[ri].cells if ri < len(table.rows) else []
+        row = []
+        for c in range(ncols):
+            val = _clean(text_row[c]) if c < len(text_row) else ""
+            has = bool(val)
+            bb = bbox_row[c] if c < len(bbox_row) else None
+            bbox = [round(float(x), 2) for x in bb] if bb else None
+            row.append({
+                "value": val,
+                "original": val,
+                "extraction_conf": 0.98 if has else 0.5,
+                "page": page_num,
+                "bbox": bbox,
+            })
+        rows.append(row)
+    return {"rows": rows, "ncols": ncols, "page": page_num, "method": "native"}
+
+
+def _ocr_page(path, page_num, dpi=200):
+    """Best-effort OCR table reconstruction for a scanned page."""
+    if not _OCR_AVAILABLE:
+        return None
+    images = convert_from_path(path, first_page=page_num, last_page=page_num, dpi=dpi)
+    if not images:
+        return None
+    data = pytesseract.image_to_data(images[0], output_type=pytesseract.Output.DICT)
+    pt = 72.0 / dpi  # px -> PDF points
+
+    lines = {}
+    all_words = []
+    for i in range(len(data["text"])):
+        txt = (data["text"][i] or "").strip()
+        if not txt:
+            continue
+        conf = int(data["conf"][i]) if str(data["conf"][i]).lstrip("-").isdigit() else -1
+        if conf < 0:
+            conf = 60
+        word = {
+            "text": txt,
+            "left": data["left"][i],
+            "right": data["left"][i] + data["width"][i],
+            "top": data["top"][i],
+            "bottom": data["top"][i] + data["height"][i],
+            "conf": conf,
+        }
+        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+        lines.setdefault(key, []).append(word)
+        all_words.append(word)
+
+    if len(all_words) < 4:
+        return None
+
+    lefts = sorted(w["left"] for w in all_words)
+    widths = sorted(w["right"] - w["left"] for w in all_words)
+    med_w = widths[len(widths) // 2] if widths else 40
+    gap = max(30, int(med_w * 1.4))
+    boundaries = []
+    for l in lefts:
+        if boundaries and l - boundaries[-1] <= gap:
+            continue
+        boundaries.append(l)
+    if len(boundaries) < 2:
+        return None
+
+    def col_of(left):
+        best, bi = 10 ** 9, 0
+        for idx, b in enumerate(boundaries):
+            if abs(left - b) < best:
+                best, bi = abs(left - b), idx
+        return bi
+
+    ncols = len(boundaries)
+    ordered = sorted(lines.values(), key=lambda ws: min(w["top"] for w in ws))
+    rows = []
+    for ws in ordered:
+        cells = [None] * ncols
+        confs = [None] * ncols
+        boxes = [None] * ncols
+        for w in sorted(ws, key=lambda x: x["left"]):
+            ci = col_of(w["left"])
+            if cells[ci] is None:
+                cells[ci], confs[ci] = w["text"], w["conf"]
+                boxes[ci] = [w["left"], w["top"], w["right"], w["bottom"]]
+            else:
+                cells[ci] += " " + w["text"]
+                confs[ci] = min(confs[ci], w["conf"])
+                b = boxes[ci]
+                boxes[ci] = [min(b[0], w["left"]), min(b[1], w["top"]), max(b[2], w["right"]), max(b[3], w["bottom"])]
+        row = []
+        for c in range(ncols):
+            val = cells[c] or ""
+            bb = boxes[c]
+            bbox = [round(bb[0] * pt, 2), round(bb[1] * pt, 2), round(bb[2] * pt, 2), round(bb[3] * pt, 2)] if bb else None
+            row.append({
+                "value": val,
+                "original": val,
+                "extraction_conf": round((confs[c] or 55) / 100.0, 3) if val else 0.4,
+                "page": page_num,
+                "bbox": bbox,
+            })
+        rows.append(row)
+    return {"rows": rows, "ncols": ncols, "page": page_num, "method": "ocr"}
+
+
+def extract_tables(path, force_ocr=False):
+    """Returns (num_pages, [table_dict,...]) with raw (un-normalized) cells.
+    force_ocr=True skips native extraction and runs OCR on every page."""
+    tables = []
+    with pdfplumber.open(path) as pdf:
+        num_pages = len(pdf.pages)
+        for pidx, page in enumerate(pdf.pages, start=1):
+            if force_ocr:
+                ocr = _ocr_page(path, pidx)
+                if ocr and ocr["rows"]:
+                    tables.append(ocr)
+                continue
+            page_text = page.extract_text() or ""
+            found = page.find_tables()
+            if found:
+                for tb in found:
+                    grid = tb.extract()
+                    if grid and len(grid) >= 1:
+                        tables.append(_build_native_table(tb, pidx))
+            elif len(page_text.strip()) < 15:
+                ocr = _ocr_page(path, pidx)
+                if ocr and ocr["rows"]:
+                    tables.append(ocr)
+    return num_pages, tables
+
+
+def merge_multipage(tables):
+    """Merge consecutive-page tables with identical column count into one,
+    preserving per-row origin page (handles multipage tables without dup rows)."""
+    if not tables:
+        return tables
+    merged = [tables[0]]
+    for t in tables[1:]:
+        prev = merged[-1]
+        if t["ncols"] == prev["ncols"] and t["page"] == prev["page"] + 1 and t["method"] == prev["method"]:
+            prev["rows"].extend(t["rows"])
+            prev.setdefault("source_pages", [prev["page"]])
+            prev["source_pages"].append(t["page"])
+        else:
+            merged.append(t)
+    for m in merged:
+        m.setdefault("source_pages", [m["page"]])
+    return merged
+
+
+
+def render_first_page_thumb(content: bytes, width: int = 240):
+    """Render the first PDF page to a small PNG thumbnail (bytes) or None."""
+    try:
+        import io
+
+        from pdf2image import convert_from_bytes
+        images = convert_from_bytes(content, first_page=1, last_page=1, dpi=80)
+        if not images:
+            return None
+        img = images[0]
+        ratio = width / img.width
+        img = img.resize((width, max(1, int(img.height * ratio))))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"thumbnail render failed: {e}")
+        return None

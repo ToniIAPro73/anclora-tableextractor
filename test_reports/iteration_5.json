@@ -1,0 +1,20 @@
+{
+  "summary": "Iteration 5: Backend-only regression + new tests for Emergent object-storage-backed PDF file flow. Added TestObjectStorage class with 4 tests validating (a) upload persists to object storage with correct storage_path prefix 'anclora-tableextract/uploads/{user_id}/' and NO raw 'data' blob in the pdf_files reference doc, size matches uploaded bytes and /file returns identical bytes; (b) reprocess?mode=ocr loads the PDF from object storage and returns {ok, mode:'ocr'} with all tables extraction_method='ocr'; (c) cross-user isolation on /file returns 401/403/404; (d) DELETE removes the pdf_files reference and /file subsequently returns 404. Full suite run serially with pytest -n 0: 48/48 passed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "backend/storage.py is minimal and correct (stale-key refresh once on 404 for both put/get). Consider caching storage_key with a TTL and adding retry with backoff on 5xx.",
+    "server.py falls back to legacy Mongo 'data' blob if put_object fails during upload — good graceful degradation, but log at ERROR/WARN level and expose a health check for object-storage availability.",
+    "No object-storage delete API is used (soft-delete pattern by removing the DB reference). Consider a background reaper/cron to purge orphaned objects once the storage API supports delete."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100%", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "MongoDB test_database seeded sessions: 'test_session_fixed' (user_id=test-user-fixed) primary; 'other_session' (user_id=other-user) created on-the-fly for isolation tests.",
+  "seed_data_creation": "Secondary user 'other-user' + session 'other_session' upserted via mongosh in TestHistory.test_user_isolation and TestObjectStorage.test_cross_user_cannot_read_file.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py now has 48 tests. Object-storage backed flow is exercised end-to-end (upload -> /file -> reprocess?mode=ocr -> delete). Test 'test_upload_stores_reference_in_object_storage' uses mongosh --quiet to inspect the pdf_files reference doc; keep mongosh available. /tmp/sample_invoice.pdf (2081 bytes) and /tmp/multi.pdf must exist. Frontend was intentionally skipped.",
+  "rca of the issue": "No bugs found. One initial test-scaffold assertion for the mongosh output (which does not quote keys) was fixed to compare against unquoted 'size' + size value."
+}
