@@ -3,12 +3,13 @@ import logging
 import os
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import List
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from starlette.middleware.cors import CORSMiddleware
 
 from auth import auth_router, get_current_user
@@ -24,6 +25,8 @@ from normalization import (detect_date_format, infer_column_type,
                            normalize_value, parse_date_with)
 from schema_validation import build_cells, combine_confidence, reason_code
 from storage import APP_NAME, get_object, init_storage, put_object
+from sheets import (build_auth_url, exchange_code, export_document_to_sheets,
+                    is_configured)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -476,6 +479,56 @@ async def export_document(doc_id: str, format: str = "xlsx", user: User = Depend
     return Response(content=data, media_type=media, headers={
         "Content-Disposition": f'attachment; filename="{base}.{ext}"'
     })
+
+
+@app.post("/api/documents/{doc_id}/export-sheets")
+async def export_sheets(doc_id: str, user: User = Depends(get_current_user)):
+    if not is_configured():
+        raise HTTPException(status_code=400, detail="Google Sheets no está configurado")
+    doc = await db.documents.find_one({"id": doc_id, "user_id": user.user_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+
+    token = await db.google_tokens.find_one({"user_id": user.user_id}, {"_id": 0})
+    if not token:
+        state = uuid.uuid4().hex
+        await db.oauth_states.insert_one({"state": state, "user_id": user.user_id, "doc_id": doc_id, "created_at": now_iso()})
+        return {"auth_required": True, "auth_url": build_auth_url(state)}
+
+    tables = await db.tables.find({"documento_id": doc_id, "user_id": user.user_id}, {"_id": 0}).to_list(200)
+    try:
+        url, updated = await asyncio.to_thread(export_document_to_sheets, token, doc, tables)
+    except Exception as e:
+        logger.warning(f"sheets export failed, re-auth required: {e}")
+        await db.google_tokens.delete_one({"user_id": user.user_id})
+        state = uuid.uuid4().hex
+        await db.oauth_states.insert_one({"state": state, "user_id": user.user_id, "doc_id": doc_id, "created_at": now_iso()})
+        return {"auth_required": True, "auth_url": build_auth_url(state)}
+
+    if updated:
+        await db.google_tokens.update_one({"user_id": user.user_id}, {"$set": updated})
+    await db.documents.update_one({"id": doc_id}, {"$set": {"estado": "exportado"}})
+    return {"ok": True, "url": url}
+
+
+@app.get("/api/oauth/sheets/callback")
+async def sheets_callback(code: str = None, state: str = None, error: str = None):
+    front = (os.environ.get("FRONTEND_URL") or "").rstrip("/")
+    if error or not code or not state:
+        return RedirectResponse(f"{front}/history?sheets=error")
+    st = await db.oauth_states.find_one({"state": state}, {"_id": 0})
+    if not st:
+        return RedirectResponse(f"{front}/history?sheets=error")
+    await db.oauth_states.delete_one({"state": state})
+    try:
+        token = await asyncio.to_thread(exchange_code, code)
+    except Exception as e:
+        logger.exception("sheets token exchange failed")
+        return RedirectResponse(f"{front}/review/{st['doc_id']}?sheets=error")
+    token["user_id"] = st["user_id"]
+    await db.google_tokens.update_one({"user_id": st["user_id"]}, {"$set": token}, upsert=True)
+    return RedirectResponse(f"{front}/review/{st['doc_id']}?sheets=connected")
+
 
 
 app.include_router(auth_router)

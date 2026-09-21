@@ -1,8 +1,8 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
   FileSpreadsheet, Filter, CheckCircle2, Download, Loader2,
-  FileJson, FileText, Sheet, Layers, ScanText, Type, FileStack, Undo2, Redo2, Keyboard,
+  FileJson, FileText, Sheet, Layers, ScanText, Type, FileStack, Undo2, Redo2, Keyboard, ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Header } from "@/components/Header";
@@ -28,6 +28,9 @@ export default function Review() {
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
   const [reprocessing, setReprocessing] = useState(false);
+  const [sheetsLoading, setSheetsLoading] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sheetsParamHandled = useRef(false);
 
   const load = useCallback(async () => {
     if (!docId) { setLoading(false); return; }
@@ -199,7 +202,6 @@ export default function Review() {
   }, [doUndo, doRedo]);
 
   const reprocessOcr = async () => {
-    setReprocessing(true);
     try {
       await api.post(`/documents/${docId}/reprocess?mode=ocr&lang=${lang}`);
       setUndoStack([]); setRedoStack([]);

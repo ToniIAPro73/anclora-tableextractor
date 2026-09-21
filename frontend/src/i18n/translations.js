@@ -115,6 +115,7 @@ export const translations = {
       xlsx: "Excel (.xlsx)",
       csv: "CSV (.csv)",
       json: "JSON (.json)",
+      sheets: "Google Sheets",
       downloading: "Descargando…",
     },
     history: {
@@ -153,6 +154,9 @@ export const translations = {
       reprocessed: "Documento reprocesado con OCR",
       datesAutofilled: "Fechas autocompletadas · formato",
       rulesSaved: "Reglas de validación aplicadas",
+      sheetsConnecting: "Conectando con Google Sheets…",
+      sheetsExported: "Exportado a Google Sheets",
+      sheetsError: "No se pudo exportar a Google Sheets",
     },
   },
   en: {
@@ -271,6 +275,7 @@ export const translations = {
       xlsx: "Excel (.xlsx)",
       csv: "CSV (.csv)",
       json: "JSON (.json)",
+      sheets: "Google Sheets",
       downloading: "Downloading…",
     },
     history: {
@@ -309,6 +314,9 @@ export const translations = {
       reprocessed: "Document reprocessed with OCR",
       datesAutofilled: "Dates auto-filled · format",
       rulesSaved: "Validation rules applied",
+      sheetsConnecting: "Connecting to Google Sheets…",
+      sheetsExported: "Exported to Google Sheets",
+      sheetsError: "Could not export to Google Sheets",
     },
   },
 };
