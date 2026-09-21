@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 4 regression + new-feature pass. Backend: 44/44 pytest cases pass (added 9 new tests across TestDateAutofill (auto-detects %d/%m/%Y, reparses non-edited cells to ISO with norm_conf=1.0 and combined score>=0.8, sets column_types[col]='date', preserves edited cells, 401 unauth, 404 unknown table) and TestColumnRules (persists rules under column_rules[str(col)], survives reload via GET /documents/{id}, sending all-empty rule removes it, 401 unauth, 404 unknown table)). Also had to regenerate /tmp/multi.pdf which was missing. Isolated iteration-4 tests to a dedicated autofill_doc_id fixture so prior column-type flips don't leak. Frontend (Review): (1) Date autofill — the column-type dropdown on a date column shows 'Autocompletar fechas' (date-autofill-<tid>-<col>); clicking it triggers POST /date-autofill, shows toast with detected fmt, and the action is undoable (undo restored the exact previous cell text). (2) Validation rules — rules-button-<tid>-<col> opens the rules popover, filling required + min=2 + max=5 on Cantidad (col 2) then clicking rule-save-2 flips out-of-range values (rows with 1 and 10) to RED with the AlertTriangle warning icon; metrics moved from 100%/0/0 to 90%(18)/0/10%(2) and doubtful-counter went from 'Todas las celdas dudosas revisadas' to '2 celdas dudosas pendientes'. Rules persist after reload (r1 stays data-violated=1, popover reopens with min=2, max=5, required checked). Undo removes violations (data-violated flips 1->0). (3) Compare original — after editing 'Teclado mecánico' to 'Teclado corregido' on cell 0-1, compare-<tid>-0-1 history icon appears and the tooltip 'Teclado mecánico (strikethrough) → Teclado corregido' renders on hover.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Reload happens frequently in this UI; undo/redo state is component-local so any user reload wipes the stack. Consider persisting the undo stack (session storage) or explicitly telling users that reload discards history — non-blocking.",
+    "PytestRemovedIn10Warning still present on TestBatchExport.two_doc_ids fixture (class-scoped fixture as instance method). Convert to @classmethod for future cleanup.",
+    "Toolbar hint 'Flechas para navegar · Enter/Tab para editar' is still misleading because a single click opens the editor immediately (must press Escape first to navigate with arrows). Minor UX polish."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py",
+    "/tmp/multi.pdf (regenerated - was missing)"
+  ],
+  "success_rate": {"backend": "100% (44/44)", "frontend": "100% (3 new flows + regression all verified)"},
+  "test_credentials": "Header Authorization: Bearer test_session_fixed (user_id=test-user-fixed) or cookie session_token=test_session_fixed for domain pdf-to-excel-178.preview.emergentagent.com. Pre-seeded in test_database.",
+  "seed_data_creation": "Regenerated /tmp/multi.pdf (2 pages, dd/mm/yyyy dates). Test docs (autofill.pdf/sample_invoice.pdf/multi.pdf/reproc.pdf/batch_a/batch_b) created and deleted per fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run backend tests serially: `pytest /app/backend/tests/backend_test.py -n 0 --junitxml=/app/test_reports/pytest/pytest_results.xml`. New iteration-4 tests live in TestDateAutofill and TestColumnRules, and use a dedicated autofill_doc_id fixture. Google Sheets export is NOT implemented yet (pending user OAuth credentials) — do not test it. Frontend testids for iteration 4: date-autofill-<tid>-<col>, rules-button-<tid>-<col>, rules-popover-<tid>-<col>, rule-required-<col>, rule-min-<col>, rule-max-<col>, rule-save-<col>, rule-clear-<col>, compare-<tid>-<r>-<c>; cells expose data-violated='0'|'1'. Note: undo/redo stack is per-mount, so verify undo BEFORE reloading.",
+  "rca of the issue": "No blocking issues found. During initial run one test failed because prior TestColumnType tests had mutated the module-scoped fresh_doc_id (Producto flipped to date) — fixed by adding a dedicated isolated autofill_doc_id fixture. multi.pdf was missing from /tmp; regenerated with reportlab per the sample template."
+}

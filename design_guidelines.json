@@ -1,0 +1,178 @@
+{
+  "project_name": "Anclora TableExtract",
+  "app_type": "hybrid_fullstack (data-heavy productivity / document-processing tool)",
+  "emotional_archetype": "THE PERFORMANCE PRO (Precision, High-Density Data, Tactical Clarity)",
+  "brand_identity": {
+    "visible_name": "Anclora TableExtract",
+    "logo_spec": "Top-left corner of header. Icon + wordmark with crisp cyan-blue accent indicator dot/accent mark. Typographic placeholder with logo icon container.",
+    "tagline": "AI-Powered PDF Table Extraction & Validation Pipeline"
+  },
+  "theme_system": {
+    "default_mode": "dark",
+    "supported_modes": ["dark", "light", "system"],
+    "persistence": "localStorage key: 'anclora_theme'",
+    "fouc_prevention": "Inline script in index.html to read localStorage before React renders and apply 'dark' class to html root element",
+    "toggle_control": {
+      "type": "Single circular button on far right of header",
+      "behavior": "Click opens a compact dropdown menu with 3 options: Sun (Claro), Moon (Oscuro), Monitor (Sistema). Active mode icon displayed on trigger button.",
+      "style": "Perfect circle pill, bg #0E1525 (dark) or #1E293B, border 1.5px luminous cyan #38BDF8 with 0 0 10px rgba(56, 189, 248, 0.35) glow, crisp off-white icon #F5F7FA, smooth 180ms hover and focus transitions"
+    }
+  },
+  "i18n_system": {
+    "default_language": "ES",
+    "supported_languages": ["ES", "EN"],
+    "persistence": "localStorage key: 'anclora_lang'",
+    "toggle_control": {
+      "position": "Immediately to the left of the theme toggle button in the header",
+      "style": "Pill-shaped toggle button, bg #0E1525, border 1.5px luminous cyan #38BDF8 with glowing box-shadow 0 0 10px rgba(56, 189, 248, 0.35), globe icon + uppercase language code ('ES' / 'EN') in 12px semibold/bold sans-serif font, white text #F5F7FA, gap 8px-12px between buttons in header group"
+    }
+  },
+  "colors": {
+    "dark_mode": {
+      "bg_base": "#0B0F19",
+      "bg_surface": "#101828",
+      "bg_surface_elevated": "#1E293B",
+      "bg_surface_hover": "#243248",
+      "border_default": "#1E293B",
+      "border_active": "#38BDF8",
+      "text_primary": "#F8FAFC",
+      "text_secondary": "#94A3B8",
+      "text_muted": "#64748B",
+      "accent_primary": "#38BDF8",
+      "accent_hover": "#0EA5E9",
+      "accent_glow": "rgba(56, 189, 248, 0.35)"
+    },
+    "light_mode": {
+      "bg_base": "#F8FAFC",
+      "bg_surface": "#FFFFFF",
+      "bg_surface_elevated": "#F1F5F9",
+      "bg_surface_hover": "#E2E8F0",
+      "border_default": "#E2E8F0",
+      "border_active": "#0284C7",
+      "text_primary": "#0F172A",
+      "text_secondary": "#475569",
+      "text_muted": "#94A3B8",
+      "accent_primary": "#0284C7",
+      "accent_hover": "#0369A1",
+      "accent_glow": "rgba(2, 132, 199, 0.25)"
+    },
+    "confidence_scores": {
+      "green": {
+        "label": "High Confidence (>= 90%)",
+        "bg_dark": "rgba(16, 185, 129, 0.15)",
+        "bg_light": "rgba(16, 185, 129, 0.12)",
+        "text_dark": "#34D399",
+        "text_light": "#059669",
+        "border_dark": "rgba(52, 211, 153, 0.3)",
+        "border_light": "rgba(16, 185, 129, 0.3)"
+      },
+      "amber": {
+        "label": "Medium Confidence (60% - 89%)",
+        "bg_dark": "rgba(245, 158, 11, 0.22)",
+        "bg_light": "rgba(245, 158, 11, 0.18)",
+        "text_dark": "#FBBF24",
+        "text_light": "#D97706",
+        "border_dark": "rgba(251, 191, 36, 0.5)",
+        "border_light": "rgba(217, 119, 6, 0.4)"
+      },
+      "red": {
+        "label": "Low Confidence (< 60%)",
+        "bg_dark": "rgba(239, 68, 68, 0.25)",
+        "bg_light": "rgba(239, 68, 68, 0.18)",
+        "text_dark": "#FCA5A5",
+        "text_light": "#DC2626",
+        "border_dark": "rgba(239, 68, 68, 0.6)",
+        "border_light": "rgba(220, 38, 38, 0.5)"
+      }
+    }
+  },
+  "typography": {
+    "font_family_main": "'Inter', 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif",
+    "font_family_mono": "'JetBrains Mono', 'Fira Code', monospace",
+    "headings": {
+      "h1": "text-3xl sm:text-4xl font-bold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-semibold tracking-tight",
+      "h3": "text-xl font-semibold tracking-normal",
+      "h4": "text-lg font-medium tracking-normal"
+    },
+    "data_cells": "font-mono text-sm font-normal tracking-wide"
+  },
+  "layout_and_navigation": {
+    "header": {
+      "type": "Sticky top bar across all pages",
+      "bg_dark": "bg-[#0B0F19]/90 backdrop-blur-xl border-b border-[#1E293B]",
+      "bg_light": "bg-white/90 backdrop-blur-xl border-b border-[#E2E8F0]",
+      "structure": [
+        "Left: Logo 'Anclora TableExtract' with glowing cyan accent dot",
+        "Center: Navigation links (Cargar PDFs, Revisor Spreadsheet, Historial, Métricas)",
+        "Right: Language toggle ('ES'/'EN') + Theme circular menu toggle, spaced 10px apart"
+      ]
+    },
+    "main_container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
+  },
+  "key_views": {
+    "drag_drop_zone": {
+      "description": "Multi-PDF upload with drag-and-drop zone, page selector & preview thumbnails",
+      "features": [
+        "Interactive PDF page preview thumbnails with toggleable selection checkboxes",
+        "OCR fallback auto-detection indicator (Camelot/pdfplumber native vs Tesseract OCR)",
+        "Extraction parameters panel (date format, decimal separator, header detection sensitivity)"
+      ]
+    },
+    "spreadsheet_grid": {
+      "description": "ag-grid style high-density data review grid with cell-level confidence scores",
+      "features": [
+        "Cell color highlights: Green (>=90%), Amber (60-89%), Red (<60%)",
+        "Toggle 'Solo celdas dudosas' (Filter to view only amber and red cells)",
+        "Inline cell editor with keyboard navigation (Enter/Tab/Esc) and real-time validation",
+        "Batch normalizers for dates (YYYY-MM-DD), numbers (1.234,56 -> 1234.56), and currency units",
+        "Confidence breakdown drawer/popover showing page number, bounding box coordinates & OCR score"
+      ]
+    },
+    "export_panel": {
+      "description": "Download modal/drawer with configurable export options",
+      "formats": ["Excel (.xlsx)", "CSV (.csv)", "JSON (.json)"],
+      "options": ["Include origin page metadata", "Include confidence scores per cell", "Export corrected version vs original extraction"]
+    },
+    "history_view": {
+      "description": "Document history table with status badges and re-download links",
+      "status_badges": {
+        "pendiente": "Amber badge (Pendiente de revisión)",
+        "validado": "Emerald badge (Validado)",
+        "exportado": "Cyan/Blue badge (Exportado)"
+      }
+    },
+    "auth": {
+      "description": "Google Auth modal or header profile menu with avatar, email, and mock auth states"
+    }
+  },
+  "image_urls": [
+    {
+      "category": "hero_banner",
+      "description": "Financial document review and table extraction workflow background",
+      "url": "https://images.unsplash.com/photo-1551288049-bebda4e38f71?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzF8MHwxfHNlYXJjaHwxfHxkb2N1bWVudCUyMHByb2Nlc3NpbmclMjBkYXRhJTIwdGFibGUlMjBkYXNoYm9hcmR8ZW58MHx8fHwxNzg5ODkxMDI3fDA&ixlib=rb-4.1.0&q=85"
+    },
+    {
+      "category": "analytics_dashboard",
+      "description": "Data processing and quality score monitoring screen",
+      "url": "https://images.unsplash.com/photo-1526628953301-3e589a6a8b74?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzF8MHwxfHNlYXJjaHwzfHxkb2N1bWVudCUyMHByb2Nlc3NpbmclMjBkYXRhJTIwdGFibGUlMjBkYXNoYm9hcmR8ZW58MHx8fHwxNzg5ODkxMDI3fDA&ixlib=rb-4.1.0&q=85"
+    },
+    {
+      "category": "document_review",
+      "description": "Document auditing and financial table validation action",
+      "url": "https://images.pexels.com/photos/7688123/pexels-photo-7688123.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    }
+  ],
+  "testing_and_accessibility": {
+    "data_testid_rule": "ALL interactive and key informational elements MUST include a descriptive data-testid attribute in kebab-case (e.g. data-testid='upload-dropzone', data-testid='theme-toggle-button', data-testid='language-toggle-button', data-testid='filter-doubtful-cells-button', data-testid='export-xlsx-button')",
+    "contrast_compliance": "WCAG AA compliant contrast ratios for both dark and light modes across all green/amber/red cell states"
+  },
+  "instructions_to_main_agent": [
+    "Follow the theme and language preferences stored in localStorage to ensure seamless refresh without FOUC.",
+    "Implement the exact header group with 'ES/EN' pill toggle on the left and circular theme toggle on the right with glowing cyan borders (#38BDF8).",
+    "Build the spreadsheet data grid with high performance, inline editing capabilities, keyboard navigation, and doubt filter toggle.",
+    "Provide rich mock PDF processing simulation for Camelot/pdfplumber native extraction and fallback Tesseract OCR with realistic tabular data.",
+    "Support full bilingual translations (Spanish default / English) across all labels, tooltips, toasts, modals, and exported headers.",
+    "Always include data-testid on buttons, inputs, tables, toggles, and modals for automated validation."
+  ]
+}

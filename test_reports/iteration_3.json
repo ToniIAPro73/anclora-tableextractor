@@ -1,0 +1,22 @@
+{
+  "summary": "Iteration 3 regression + new-feature pass. Backend: 36/36 pytest cases pass, including 6 new tests across TestCellState (PUT /cell-state roundtrip persists valor/score/edited/reason_code, 401 without auth, 404 for unknown table_id and unknown fila/columna) and TestReprocessOcr (POST /reprocess?mode=ocr on a native invoice returns {ok, mode:'ocr', num_tablas>=1}, resets estado to 'pendiente', flips every table's extraction_method to 'ocr'; 401 without auth; 404 for unknown doc). Frontend (Review): keyboard editing works exactly per spec — clicking a cell opens the inline editor at that cell, Enter commits and opens editor on the cell below, Tab commits and opens editor on the cell to the right, Escape closes without saving, and when not editing ArrowDown+Enter starts editing at the new cell. Edits persist with edited=true and score_confianza=1.0. Undo button reverts to previous value (edited=false, score restored); Redo button re-applies; Ctrl+Z / Ctrl+Shift+Z shortcuts work identically. Column-type change (Producto text->date) is also undoable — undo restores column_types[1] from 'date' back to 'text' along with cell values. Metrics panel renders metric-green/amber/red with percentages+counts (e.g. 63%(22)/17%(6)/20%(7) after reprocess) and metric-remaining shows either 'N celdas dudosas pendientes' or 'Todas las celdas dudosas revisadas'; values recompute after edits, column-type changes and reprocess. Reprocess-OCR button triggers POST /reprocess, shows toast 'Documento reprocesado con OCR', reloads the document, and the method badge switches from 'Nativo (texto)' to 'OCR (escaneado)'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PytestRemovedIn10Warning persists on TestBatchExport.two_doc_ids (class-scoped fixture as instance method). Non-blocking; convert to @classmethod for future cleanup.",
+    "ConfidenceGrid clicking a cell immediately opens the editor (onClick=beginEdit). That is user-friendly but means the toolbar hint 'Flechas para navegar · Enter/Tab para editar' is only accurate after the user presses Escape once. Consider tweaking the hint or making the first click select-only, then second click edit (Excel-like)."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (36/36)", "frontend": "100% (all 4 iteration-3 flows verified end-to-end)"},
+  "test_credentials": "Header Authorization: Bearer test_session_fixed (user_id=test-user-fixed) or cookie session_token=test_session_fixed for domain pdf-to-excel-178.preview.emergentagent.com. Sessions pre-seeded in test_database. Secondary user other-user/other_session also seeded for isolation tests.",
+  "seed_data_creation": "None new; reused existing seeded sessions. Fresh docs uploaded/cleaned during tests are prefixed (sample_invoice/multi/batch_a/batch_b/reproc/uitest*) and deleted in fixture teardown / test try/finally.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run backend tests serially: `pytest /app/backend/tests/backend_test.py -n 0 --junitxml=/app/test_reports/pytest/pytest_results.xml`. New iteration-3 tests live in TestCellState and TestReprocessOcr. Frontend testids: cell-<tid>-<r>-<c>, cell-input-<tid>-<r>-<c>, undo-button, redo-button, reprocess-ocr-button, metrics-panel, metric-green/amber/red, metric-remaining. Note: clicking any cell opens the editor immediately; to test Arrow navigation, first press Escape after a click.",
+  "rca of the issue": "No blocking issues found."
+}
