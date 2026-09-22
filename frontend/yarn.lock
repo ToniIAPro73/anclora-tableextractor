@@ -7,9 +7,9 @@
   resolved "https://registry.yarnpkg.com/@alloc/quick-lru/-/quick-lru-5.2.0.tgz#7bf68b20c0a350f936915fcae06f58e32007ce30"
   integrity sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==
 
-"@anclora/design-system@https://codeload.github.com/ToniIAPro73/anclora-design-system/tar.gz/2eb6231228d2486224b81a9b403eec6bf6b0b564":
-  version "0.10.0"
-  resolved "https://codeload.github.com/ToniIAPro73/anclora-design-system/tar.gz/2eb6231228d2486224b81a9b403eec6bf6b0b564#d10f061b444227990871df02e4b562d7cb54bd9e"
+"@anclora/design-system@https://codeload.github.com/ToniIAPro73/anclora-design-system/tar.gz/62a6df5e63b6b63c7e05a13ca573eb3266e9b45d":
+  version "0.11.0"
+  resolved "https://codeload.github.com/ToniIAPro73/anclora-design-system/tar.gz/62a6df5e63b6b63c7e05a13ca573eb3266e9b45d#0a9bf57d22b129473c4ee8db80ed5243e8e11c7c"
 
 "@apideck/better-ajv-errors@^0.3.1":
   version "0.3.7"

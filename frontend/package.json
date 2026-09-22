@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "@anclora/design-system": "https://codeload.github.com/ToniIAPro73/anclora-design-system/tar.gz/2eb6231228d2486224b81a9b403eec6bf6b0b564",
+    "@anclora/design-system": "https://codeload.github.com/ToniIAPro73/anclora-design-system/tar.gz/62a6df5e63b6b63c7e05a13ca573eb3266e9b45d",
     "@hookform/resolvers": "5.0.1",
     "@radix-ui/react-accordion": "1.2.8",
     "@radix-ui/react-alert-dialog": "1.1.11",

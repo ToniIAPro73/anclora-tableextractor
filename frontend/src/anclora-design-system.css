@@ -2,6 +2,13 @@
 @import "@anclora/design-system/components/button.css";
 @import "@anclora/design-system/components/status-badge.css";
 @import "@anclora/design-system/components/empty-state.css";
+@import "@anclora/design-system/components/alert.css";
+@import "@anclora/design-system/components/toast.css";
+@import "@anclora/design-system/components/loading.css";
+@import "@anclora/design-system/components/processing.css";
+@import "@anclora/design-system/components/progress.css";
+@import "@anclora/design-system/components/error-state.css";
+@import "@anclora/design-system/components/skeleton.css";
 
 /* Compatibility bridge: TableExtract keeps its existing Tailwind theme while
    the pilot consumes canonical component anatomy and semantic roles. The
@@ -18,6 +25,7 @@
   --text-muted: hsl(var(--muted-foreground));
   --text-eyebrow: hsl(var(--muted-foreground));
   --border-default: hsl(var(--border));
+  --border-control: hsl(var(--input));
   --border-subtle: hsl(var(--border));
   --focus-ring: hsl(var(--ring));
   --action-primary-bg: hsl(var(--primary));
@@ -38,8 +46,10 @@
   --component-button-shadow-ghost: none;
   --surface-radius-panel: 1rem;
   --radius-sm: 0.5rem;
+  --radius-lg: 1rem;
   --radius-pill: 999px;
   --space-2: 0.5rem;
+  --space-1: 0.25rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
   --dur-base: 0.2s;
@@ -47,6 +57,7 @@
   --motion-hover-lift-button: 0;
   --track-button: 0.02em;
   --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 18px 42px rgba(15, 23, 42, 0.14);
   --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --font-sans: "Inter", "Manrope", sans-serif;
   --font-display: "Manrope", "Inter", sans-serif;
@@ -62,6 +73,9 @@
   --status-review-text: hsl(var(--primary));
   --status-review-surface: hsl(var(--primary) / 0.12);
   --status-review-border: hsl(var(--primary));
+  --status-danger-text: hsl(var(--destructive));
+  --status-danger-surface: hsl(var(--destructive) / 0.12);
+  --status-danger-border: hsl(var(--destructive));
 }
 
 .dark .anclora-ds-scope {
