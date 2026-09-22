@@ -1,6 +1,6 @@
 import React, { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { UploadCloud, FileText, X, Loader2, CheckCircle2, AlertCircle, Table2, ArrowRight, Images } from "lucide-react";
+import { UploadCloud, FileText, X, CheckCircle2, AlertCircle, Table2, ArrowRight, Images } from "lucide-react";
 import { toast } from "sonner";
 import { Header } from "@/components/Header";
 import { useLang } from "@/contexts/LangContext";
@@ -123,12 +123,21 @@ export default function Upload() {
                 data-testid="process-button"
                 onClick={process}
                 disabled={processing}
-                className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition hover:opacity-95 active:scale-[0.98] disabled:opacity-60"
+                className="ac-button ac-button--primary ac-button--compact"
               >
-                {processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Table2 className="h-4 w-4" />}
-                {processing ? t("upload.processing") : t("upload.process")}
+                {processing ? <span className="ac-spinner" aria-hidden="true" /> : <Table2 className="h-4 w-4" aria-hidden="true" />}
+                <span className="ac-button__label">{processing ? t("upload.processing") : t("upload.process")}</span>
               </button>
             </div>
+            {processing && (
+              <div className="ac-processing-state mb-3" aria-busy="true">
+                <div className="ac-processing-state__header" role="status" aria-live="polite">
+                  <span className="ac-spinner" aria-hidden="true" />
+                  <p className="ac-processing-state__title">{t("upload.processingTitle")}</p>
+                </div>
+                <p className="ac-processing-state__summary">{t("upload.processingSummary")}</p>
+              </div>
+            )}
             <div className="space-y-2">
               {files.map((f) => {
                 const th = thumbs[f.id] || { loading: true, images: [], numPages: 0 };
@@ -150,7 +159,7 @@ export default function Upload() {
                         <X className="h-4 w-4" />
                       </button>
                     )}
-                    {processing && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                    {processing && <span className="ac-spinner" aria-label={t("upload.processing")} />}
                   </div>
 
                   {/* Page thumbnails */}
@@ -158,7 +167,7 @@ export default function Upload() {
                     <Images className="h-4 w-4 shrink-0 text-muted-foreground" />
                     {th.loading ? (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("upload.preview")}…
+                        <span className="ac-spinner" aria-hidden="true" /> <span>{t("upload.preview")}…</span>
                       </div>
                     ) : th.images.length === 0 ? (
                       <span className="text-xs text-muted-foreground">{t("upload.preview")}: —</span>
@@ -197,7 +206,7 @@ export default function Upload() {
             <h2 className="mb-3 text-sm font-semibold text-muted-foreground">{t("upload.done")}</h2>
             <div className="space-y-2">
               {results.map((r) => (
-                <div key={r.id || r.nombre_archivo} data-testid="result-item" className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
+                <div key={r.id || r.nombre_archivo} data-testid="result-item" className={r.error ? "ac-alert" : "flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3"} data-tone={r.error ? "danger" : undefined} role={r.error ? "alert" : undefined}>
                   {r.error ? (
                     <AlertCircle className="h-5 w-5 shrink-0 text-destructive" />
                   ) : (
