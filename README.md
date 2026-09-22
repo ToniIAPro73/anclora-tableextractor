@@ -34,7 +34,7 @@ El sistema combina un modelo de visión/layout para detectar la estructura de la
 └─────────────┘     └──────────────────┘     └─────────────────┘
                                                         │
                               ┌─────────────────────────┼─────────────────────────┐
-                              ▼                         ▼                         ▼
+                     ▼                         ▼                         ▼
                      Detección de tablas      Inferencia de columnas    Normalización
                      (visión / layout)         (LLM acotado)            (determinista, Python)
 ```
@@ -47,7 +47,8 @@ Principio de diseño: **IA para interpretar ambigüedad, motor determinista para
 |---|---|
 | Backend | Python · FastAPI |
 | Frontend | React |
-| Base de datos | MongoDB |
+| Base de datos | PostgreSQL / Neon |
+| ORM / migraciones | SQLAlchemy 2.x / Alembic |
 | Detección de tablas | Modelo de visión/layout + OCR |
 | Validación de esquema | Pydantic / JSON Schema |
 | Normalización | Python determinista (sin LLM) |
@@ -58,7 +59,6 @@ Principio de diseño: **IA para interpretar ambigüedad, motor determinista para
 anclora-tableextractor/
 ├── backend/          # API, pipeline de extracción, lógica de negocio
 ├── frontend/          # Interfaz React (carga, revisión, exportación)
-├── .emergent/         # Configuración del entorno de build
 ├── tests/              # Suite de pruebas
 └── README.md
 ```
@@ -69,7 +69,7 @@ anclora-tableextractor/
 
 - Python 3.11+
 - Node.js 18+ y Yarn
-- MongoDB (local o instancia remota)
+- Acceso a la base de datos Neon de producción (el runtime local es deliberadamente production-backed)
 
 ### Instalación
 
@@ -85,12 +85,36 @@ yarn install
 
 ### Variables de entorno
 
-Crea un archivo `.env` en `backend/` con las credenciales necesarias (no incluidas en el repositorio por seguridad):
+Copia `backend/.env.example` a `backend/.env.local` y `frontend/.env.example` a `frontend/.env.local`. Los archivos locales están ignorados por Git y deben tener permisos `0600`.
+
+Variables mínimas del backend:
 
 ```
-MONGO_URL=
-DB_NAME=
-LLM_API_KEY=
+APP_ENV=development
+DATABASE_URL=
+DATABASE_URL_UNPOOLED=
+DATABASE_TARGET=production
+ALLOW_PRODUCTION_MIGRATIONS=false
+FRONTEND_URL=http://localhost:3000
+CORS_ORIGINS=http://localhost:3000
+QA_USER_EMAIL=qa.tableextract@anclora.local
+LOCAL_QA_LOGIN_ENABLED=false
+LOCAL_QA_LOGIN_TOKEN=
+
+El entorno local puede apuntar deliberadamente a Neon producción. Todas las pruebas y sesiones locales deben utilizar exclusivamente el usuario QA dedicado (`QA_USER_EMAIL`); no se deben usar cuentas personales o de clientes.
+
+## Migraciones y QA
+
+Desde `backend/`, consulta el estado con `alembic current` y `alembic history`. Las migraciones contra producción están bloqueadas por defecto; para una ejecución explícita y revisada:
+
+```bash
+ALLOW_PRODUCTION_MIGRATIONS=true alembic upgrade head
+python -m scripts.seed_qa_user
+python -m scripts.cleanup_qa_data              # dry-run
+python -m scripts.cleanup_qa_data --execute    # solo datos del usuario QA
+```
+
+El endpoint local `POST /api/dev/login` sólo existe con `APP_ENV=development`, `LOCAL_QA_LOGIN_ENABLED=true`, petición desde localhost y la cabecera `X-Local-QA-Token` correcta. Usa la misma tabla de sesiones que el login normal.
 ```
 
 ### Ejecución

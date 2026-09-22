@@ -1,542 +1,870 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 import tempfile
 import time
 import uuid
-from pathlib import Path
-from typing import List
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional
 
-from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.cors import CORSMiddleware
 
-from auth import auth_router, get_current_user
+from auth import SESSION_DAYS, auth_router, get_current_user
 from column_inference import infer_column_names
-from db import db
-from exporters import (export_batch_xlsx, export_batch_zip, export_csv,
-                       export_json, export_xlsx)
+from config import get_settings
+from db.models import (
+    DocumentRow,
+    ExtractedTableRow,
+    GoogleTokenRow,
+    OAuthStateRow,
+    PdfFileRow,
+)
+from db.repositories import (
+    documents,
+    extracted_tables,
+    pdf_files,
+    oauth_states,
+    google_tokens,
+    sessions,
+    users,
+)
+from db.session import check_database, close_engine, get_db
+from exporters import (
+    export_batch_xlsx,
+    export_batch_zip,
+    export_csv,
+    export_json,
+    export_xlsx,
+)
 from extraction import extract_tables, merge_multipage, render_first_page_thumb
-from models import (BatchExport, CellStateUpdate, CellUpdate, ColumnRulesUpdate,
-                    ColumnTypeUpdate, DateAutofill, Documento, User, new_id,
-                    now_iso)
-from normalization import (detect_date_format, infer_column_type,
-                           normalize_value, parse_date_with)
+from models import (
+    BatchExport,
+    CellStateUpdate,
+    CellUpdate,
+    ColumnRulesUpdate,
+    ColumnTypeUpdate,
+    DateAutofill,
+    Documento,
+    User,
+    new_id,
+)
+from normalization import (
+    detect_date_format,
+    infer_column_type,
+    normalize_value,
+    parse_date_with,
+)
 from schema_validation import build_cells, combine_confidence, reason_code
 from storage import APP_NAME, get_object, init_storage, put_object
-from sheets import (build_auth_url, exchange_code, export_document_to_sheets,
-                    is_configured)
+from sheets import (
+    build_auth_url,
+    exchange_code,
+    export_document_to_sheets,
+    is_configured,
+)
 
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / ".env")
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
-
 app = FastAPI(title="Anclora TableExtract")
+settings = get_settings()
 
 
-# ---------------- Pipeline ----------------
+def _iso(value):
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
+def _doc_dict(row: DocumentRow) -> dict:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "nombre_archivo": row.nombre_archivo,
+        "fecha_carga": _iso(row.fecha_carga),
+        "estado": row.estado,
+        "num_paginas": row.num_paginas,
+        "num_tablas": row.num_tablas,
+        "process_ms": row.process_ms,
+        "thumb_path": row.thumb_path,
+        "error": row.error,
+    }
+
+
+def _table_dict(row: ExtractedTableRow) -> dict:
+    return {
+        "id": row.id,
+        "documento_id": row.documento_id,
+        "user_id": row.user_id,
+        "pagina_origen": row.pagina_origen,
+        "source_pages": row.source_pages or [],
+        "extraction_method": row.extraction_method,
+        "columnas": row.columnas or [],
+        "column_types": row.column_types or [],
+        "num_filas": row.num_filas,
+        "num_columnas": row.num_columnas,
+        "cells": row.cells or [],
+        "column_rules": row.column_rules or {},
+    }
+
+
+def _token_dict(row: GoogleTokenRow) -> dict:
+    result = {}
+    for key in (
+        "access_token",
+        "refresh_token",
+        "token_uri",
+        "client_id",
+        "client_secret",
+        "scopes",
+        "expires_at",
+    ):
+        value = getattr(row, key)
+        if value is not None:
+            result[key] = value.isoformat() if isinstance(value, datetime) else value
+    return result
+
+
 def _process_pdf_sync(path, force_ocr=False):
     num_pages, tables = extract_tables(path, force_ocr=force_ocr)
-    tables = merge_multipage(tables)
-    return num_pages, tables
+    return num_pages, merge_multipage(tables)
 
 
 async def _tables_from_raw(doc_id, user_id, raw_tables, lang):
-    """Build stored-table dicts (with inferred columns, deterministic
-    normalization and per-cell confidence) from raw extracted tables."""
-    stored_tables = []
+    stored = []
     for raw in raw_tables:
-        rows = raw["rows"]
-        ncols = raw["ncols"]
+        rows, ncols = raw["rows"], raw["ncols"]
         if ncols == 0 or not rows:
             continue
-
-        # LLM: infer column names ONLY (never data)
         columnas = await infer_column_names(rows, ncols, lang=lang)
-
-        # decide if first row is a header (drop it from data if so)
-        data_rows = rows
-        header_like = _looks_like_header(rows[0]) if rows else False
-        if header_like and len(rows) > 1:
-            data_rows = rows[1:]
-
-        # deterministic column-type inference + normalization
+        data_rows = rows[1:] if _looks_like_header(rows[0]) and len(rows) > 1 else rows
         column_types = []
         for c in range(ncols):
-            col_vals = [(r[c]["value"] if c < len(r) else "") for r in data_rows]
-            column_types.append(infer_column_type(col_vals))
-
+            column_types.append(
+                infer_column_type(
+                    [(r[c]["value"] if c < len(r) else "") for r in data_rows]
+                )
+            )
         rows_meta = []
-        for r in data_rows:
+        for row in data_rows:
             meta_row = []
             for c in range(ncols):
-                cell = r[c] if c < len(r) else {"value": "", "original": "", "extraction_conf": 0.5, "page": raw["page"], "bbox": None}
-                norm_val, norm_conf = normalize_value(cell["value"], column_types[c])
-                meta_row.append({
-                    "value": norm_val,
-                    "original": cell.get("original", cell["value"]),
-                    "extraction_conf": cell.get("extraction_conf", 0.9),
-                    "norm_conf": norm_conf,
-                    "page": cell.get("page", raw["page"]),
-                    "bbox": cell.get("bbox"),
-                })
+                cell = (
+                    row[c]
+                    if c < len(row)
+                    else {
+                        "value": "",
+                        "original": "",
+                        "extraction_conf": 0.5,
+                        "page": raw["page"],
+                        "bbox": None,
+                    }
+                )
+                value, norm_conf = normalize_value(cell["value"], column_types[c])
+                meta_row.append(
+                    {
+                        "value": value,
+                        "original": cell.get("original", cell["value"]),
+                        "extraction_conf": cell.get("extraction_conf", 0.9),
+                        "norm_conf": norm_conf,
+                        "page": cell.get("page", raw["page"]),
+                        "bbox": cell.get("bbox"),
+                    }
+                )
             rows_meta.append(meta_row)
-
         cells = build_cells(columnas, column_types, rows_meta)
-        stored_tables.append({
-            "id": new_id("tbl"),
-            "documento_id": doc_id,
-            "user_id": user_id,
-            "pagina_origen": raw["page"],
-            "source_pages": raw.get("source_pages", [raw["page"]]),
-            "extraction_method": raw["method"],
-            "columnas": columnas,
-            "column_types": column_types,
-            "num_filas": len(rows_meta),
-            "num_columnas": ncols,
-            "cells": [c.model_dump() for c in cells],
-        })
-    return stored_tables
+        stored.append(
+            ExtractedTableRow(
+                id=new_id("tbl"),
+                documento_id=doc_id,
+                user_id=user_id,
+                pagina_origen=raw["page"],
+                source_pages=raw.get("source_pages", [raw["page"]]),
+                extraction_method=raw["method"],
+                columnas=columnas,
+                column_types=column_types,
+                num_filas=len(rows_meta),
+                num_columnas=ncols,
+                cells=[c.model_dump() for c in cells],
+                column_rules={},
+            )
+        )
+    return stored
 
 
-async def _process_document(user: User, filename: str, content: bytes, lang: str):
+async def _process_document(
+    db: AsyncSession, user: User, filename: str, content: bytes, lang: str
+):
     t0 = time.time()
     doc = Documento(user_id=user.user_id, nombre_archivo=filename)
+    row = DocumentRow(
+        id=doc.id,
+        user_id=user.user_id,
+        nombre_archivo=doc.nombre_archivo,
+        estado=doc.estado,
+        num_paginas=0,
+        num_tablas=0,
+        process_ms=0,
+        error=None,
+    )
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
         tmp.write(content)
         tmp.flush()
         try:
             num_pages, raw_tables = await asyncio.to_thread(_process_pdf_sync, tmp.name)
-        except Exception as e:
+        except Exception as exc:
             logger.exception("extraction failed")
-            doc.error = str(e)
-            await db.documents.insert_one(doc.model_dump())
-            return doc
-
-    doc.num_paginas = num_pages
+            row.error = str(exc)
+            db.add(row)
+            await db.flush()
+            return row
     stored_tables = await _tables_from_raw(doc.id, user.user_id, raw_tables, lang)
-
-    # first-page thumbnail -> object storage (best effort)
     try:
         thumb = await asyncio.to_thread(render_first_page_thumb, content)
         if thumb:
             tpath = f"{APP_NAME}/thumbs/{user.user_id}/{doc.id}.png"
             tres = await asyncio.to_thread(put_object, tpath, thumb, "image/png")
-            doc.thumb_path = tres.get("path", tpath)
-    except Exception as e:
-        logger.warning(f"thumbnail store failed: {e}")
-
-    doc.num_tablas = len(stored_tables)
-    doc.process_ms = int((time.time() - t0) * 1000)
-    await db.documents.insert_one(doc.model_dump())
-    if stored_tables:
-        await db.tables.insert_many(stored_tables)
+            row.thumb_path = tres.get("path", tpath)
+    except Exception as exc:
+        logger.warning("thumbnail store failed: %s", exc)
+    row.num_paginas, row.num_tablas = num_pages, len(stored_tables)
+    row.process_ms = int((time.time() - t0) * 1000)
+    db.add(row)
+    db.add_all(stored_tables)
     if len(content) <= 15_000_000:
         storage_path = f"{APP_NAME}/uploads/{user.user_id}/{doc.id}.pdf"
+        pdf = PdfFileRow(
+            documento_id=doc.id,
+            user_id=user.user_id,
+            original_filename=filename,
+            content_type="application/pdf",
+            size=len(content),
+            is_deleted=False,
+        )
         try:
-            result = await asyncio.to_thread(put_object, storage_path, content, "application/pdf")
-            await db.pdf_files.replace_one(
-                {"documento_id": doc.id},
-                {"documento_id": doc.id, "user_id": user.user_id,
-                 "storage_path": result.get("path", storage_path),
-                 "original_filename": filename, "content_type": "application/pdf",
-                 "size": result.get("size", len(content)), "is_deleted": False,
-                 "created_at": now_iso()},
-                upsert=True,
+            result = await asyncio.to_thread(
+                put_object, storage_path, content, "application/pdf"
             )
-        except Exception as e:
-            logger.warning(f"object storage upload failed, falling back to DB: {e}")
-            await db.pdf_files.replace_one(
-                {"documento_id": doc.id},
-                {"documento_id": doc.id, "user_id": user.user_id, "data": content,
-                 "original_filename": filename, "content_type": "application/pdf", "is_deleted": False},
-                upsert=True,
-            )
-    return doc
+            pdf.storage_path = result.get("path", storage_path)
+            pdf.size = result.get("size", len(content))
+        except Exception as exc:
+            logger.warning("object storage upload failed, falling back to DB: %s", exc)
+            pdf.data = content
+        db.add(pdf)
+    await db.flush()
+    return row
 
 
-async def _load_pdf_bytes(doc_id, user_id):
-    """Return (bytes, record) for a document's stored PDF (object storage or legacy DB)."""
-    rec = await db.pdf_files.find_one({"documento_id": doc_id, "user_id": user_id, "is_deleted": {"$ne": True}}, {"_id": 0})
+async def _load_pdf_bytes(db: AsyncSession, doc_id: str, user_id: str):
+    rec = await pdf_files.get_owned(db, doc_id, user_id)
     if not rec:
         return None, None
-    if rec.get("storage_path"):
-        data, _ = await asyncio.to_thread(get_object, rec["storage_path"])
+    if rec.storage_path:
+        data, _ = await asyncio.to_thread(get_object, rec.storage_path)
         return data, rec
-    data = rec.get("data")
-    if data is not None and not isinstance(data, (bytes, bytearray)):
-        data = bytes(data)
-    return data, rec
+    return rec.data, rec
 
 
 def _looks_like_header(row):
     from normalization import looks_like_number
+
     non_empty = [c["value"] for c in row if c.get("value", "").strip()]
     if not non_empty:
         return False
-    numeric = sum(1 for v in non_empty if looks_like_number(v))
-    return numeric / len(non_empty) < 0.3
+    return sum(looks_like_number(v) for v in non_empty) / len(non_empty) < 0.3
 
 
-# ---------------- Routes ----------------
 @app.get("/api/")
 async def root():
     return {"message": "Anclora TableExtract API"}
 
 
+@app.get("/api/health")
+async def health():
+    try:
+        await check_database()
+        return {"status": "ok", "database": "ok"}
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+
 @app.post("/api/documents/upload")
-async def upload_documents(files: List[UploadFile] = File(...), lang: str = "es", user: User = Depends(get_current_user)):
+async def upload_documents(
+    files: List[UploadFile] = File(...),
+    lang: str = "es",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     results = []
     for f in files:
         if not f.filename.lower().endswith(".pdf"):
-            results.append({"nombre_archivo": f.filename, "error": "Solo se admiten archivos PDF"})
+            results.append(
+                {"nombre_archivo": f.filename, "error": "Solo se admiten archivos PDF"}
+            )
             continue
-        content = await f.read()
-        doc = await _process_document(user, f.filename, content, lang)
-        results.append({
-            "id": doc.id,
-            "nombre_archivo": doc.nombre_archivo,
-            "num_paginas": doc.num_paginas,
-            "num_tablas": doc.num_tablas,
-            "estado": doc.estado,
-            "process_ms": doc.process_ms,
-            "error": doc.error,
-        })
+        row = await _process_document(db, user, f.filename, await f.read(), lang)
+        results.append(
+            {
+                "id": row.id,
+                "nombre_archivo": row.nombre_archivo,
+                "num_paginas": row.num_paginas,
+                "num_tablas": row.num_tablas,
+                "estado": row.estado,
+                "process_ms": row.process_ms,
+                "error": row.error,
+            }
+        )
+    await db.commit()
     return {"documents": results}
 
 
 @app.get("/api/documents")
-async def list_documents(user: User = Depends(get_current_user)):
-    docs = await db.documents.find({"user_id": user.user_id}, {"_id": 0}).sort("fecha_carga", -1).to_list(500)
-    return {"documents": docs}
+async def list_documents(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    return {
+        "documents": [
+            _doc_dict(row) for row in await documents.list_for_user(db, user.user_id)
+        ]
+    }
+
+
+async def _owned_document(db, doc_id, user_id):
+    row = await documents.get(db, doc_id, user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    return row
 
 
 @app.get("/api/documents/{doc_id}")
-async def get_document(doc_id: str, user: User = Depends(get_current_user)):
-    doc = await db.documents.find_one({"id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
-    tables = await db.tables.find({"documento_id": doc_id, "user_id": user.user_id}, {"_id": 0}).to_list(200)
-    return {"documento": doc, "tablas": tables}
+async def get_document(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _owned_document(db, doc_id, user.user_id)
+    return {
+        "documento": _doc_dict(await documents.get(db, doc_id, user.user_id)),
+        "tablas": [
+            _table_dict(row)
+            for row in await documents.tables_for_user(db, doc_id, user.user_id)
+        ],
+    }
+
+
+async def _owned_table(db, table_id, doc_id, user_id):
+    row = await extracted_tables.get_owned(db, table_id, doc_id, user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Tabla no encontrada")
+    return row
 
 
 @app.put("/api/documents/{doc_id}/cell")
-async def update_cell(doc_id: str, update: CellUpdate, user: User = Depends(get_current_user)):
-    table = await db.tables.find_one({"id": update.table_id, "documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not table:
-        raise HTTPException(status_code=404, detail="Tabla no encontrada")
-    updated = False
-    for cell in table["cells"]:
-        if cell["fila"] == update.fila and cell["columna"] == update.columna:
-            cell["valor"] = update.valor
-            cell["score_confianza"] = 1.0  # user-corrected = validated
-            cell["edited"] = True
-            updated = True
+async def update_cell(
+    doc_id: str,
+    update_payload: CellUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    table = await _owned_table(db, update_payload.table_id, doc_id, user.user_id)
+    for cell in table.cells:
+        if (
+            cell["fila"] == update_payload.fila
+            and cell["columna"] == update_payload.columna
+        ):
+            cell["valor"], cell["score_confianza"], cell["edited"] = (
+                update_payload.valor,
+                1.0,
+                True,
+            )
             break
-    if not updated:
+    else:
         raise HTTPException(status_code=404, detail="Celda no encontrada")
-    await db.tables.update_one({"id": update.table_id}, {"$set": {"cells": table["cells"]}})
-    return {"ok": True, "fila": update.fila, "columna": update.columna, "valor": update.valor}
+    await db.commit()
+    return {
+        "ok": True,
+        "fila": update_payload.fila,
+        "columna": update_payload.columna,
+        "valor": update_payload.valor,
+    }
 
 
 @app.put("/api/documents/{doc_id}/cell-state")
-async def set_cell_state(doc_id: str, upd: CellStateUpdate, user: User = Depends(get_current_user)):
-    """Set an exact cell state — used by client undo/redo to restore prior values."""
-    table = await db.tables.find_one({"id": upd.table_id, "documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not table:
-        raise HTTPException(status_code=404, detail="Tabla no encontrada")
-    updated = None
-    for cell in table["cells"]:
-        if cell["fila"] == upd.fila and cell["columna"] == upd.columna:
-            cell["valor"] = upd.valor
-            cell["score_confianza"] = upd.score_confianza
-            cell["edited"] = upd.edited
-            if upd.norm_conf is not None:
-                cell["norm_conf"] = upd.norm_conf
-            if upd.reason_code is not None:
-                cell["reason_code"] = upd.reason_code
-            updated = cell
-            break
+async def set_cell_state(
+    doc_id: str,
+    upd: CellStateUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    table = await _owned_table(db, upd.table_id, doc_id, user.user_id)
+    updated = next(
+        (
+            cell
+            for cell in table.cells
+            if cell["fila"] == upd.fila and cell["columna"] == upd.columna
+        ),
+        None,
+    )
     if updated is None:
         raise HTTPException(status_code=404, detail="Celda no encontrada")
-    await db.tables.update_one({"id": upd.table_id}, {"$set": {"cells": table["cells"]}})
+    updated.update(
+        {
+            "valor": upd.valor,
+            "score_confianza": upd.score_confianza,
+            "edited": upd.edited,
+        }
+    )
+    if upd.norm_conf is not None:
+        updated["norm_conf"] = upd.norm_conf
+    if upd.reason_code is not None:
+        updated["reason_code"] = upd.reason_code
+    await db.commit()
     return {"ok": True, "cell": updated}
 
 
 @app.post("/api/documents/{doc_id}/reprocess")
-async def reprocess_document(doc_id: str, mode: str = "ocr", lang: str = "es", user: User = Depends(get_current_user)):
-    """Re-run extraction on the stored PDF. mode='ocr' forces Tesseract OCR on
-    every page (useful when native detection missed a scanned table)."""
-    doc = await db.documents.find_one({"id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
-    data, _ = await _load_pdf_bytes(doc_id, user.user_id)
+async def reprocess_document(
+    doc_id: str,
+    mode: str = "ocr",
+    lang: str = "es",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    doc = await _owned_document(db, doc_id, user.user_id)
+    data, _ = await _load_pdf_bytes(db, doc_id, user.user_id)
     if data is None:
-        raise HTTPException(status_code=404, detail="PDF original no disponible para reprocesar")
-
-    force_ocr = mode == "ocr"
-    t0 = time.time()
+        raise HTTPException(
+            status_code=404, detail="PDF original no disponible para reprocesar"
+        )
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
         tmp.write(data)
         tmp.flush()
-        try:
-            num_pages, raw_tables = await asyncio.to_thread(_process_pdf_sync, tmp.name, force_ocr)
-        except Exception as e:
-            logger.exception("reprocess failed")
-            raise HTTPException(status_code=500, detail=f"Error al reprocesar: {e}")
-
-    stored_tables = await _tables_from_raw(doc_id, user.user_id, raw_tables, lang)
-    await db.tables.delete_many({"documento_id": doc_id})
-    if stored_tables:
-        await db.tables.insert_many(stored_tables)
-    await db.documents.update_one(
-        {"id": doc_id},
-        {"$set": {"estado": "pendiente", "num_tablas": len(stored_tables), "num_paginas": num_pages, "process_ms": int((time.time() - t0) * 1000)}},
+        num_pages, raw_tables = await asyncio.to_thread(
+            _process_pdf_sync, tmp.name, mode == "ocr"
+        )
+    stored = await _tables_from_raw(doc_id, user.user_id, raw_tables, lang)
+    await db.execute(
+        delete(ExtractedTableRow).where(
+            ExtractedTableRow.documento_id == doc_id,
+            ExtractedTableRow.user_id == user.user_id,
+        )
     )
-    return {"ok": True, "num_tablas": len(stored_tables), "mode": mode}
+    db.add_all(stored)
+    doc.num_tablas, doc.num_paginas, doc.estado = len(stored), num_pages, "pendiente"
+    await db.commit()
+    return {"ok": True, "num_tablas": len(stored), "mode": mode}
 
 
 @app.post("/api/documents/{doc_id}/validate")
-async def validate_document(doc_id: str, user: User = Depends(get_current_user)):
-    res = await db.documents.update_one(
-        {"id": doc_id, "user_id": user.user_id}, {"$set": {"estado": "validado"}}
-    )
-    if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
+async def validate_document(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    doc = await _owned_document(db, doc_id, user.user_id)
+    doc.estado = "validado"
+    await db.commit()
     return {"ok": True, "estado": "validado"}
 
 
 @app.delete("/api/documents/{doc_id}")
-async def delete_document(doc_id: str, user: User = Depends(get_current_user)):
-    res = await db.documents.delete_one({"id": doc_id, "user_id": user.user_id})
-    if res.deleted_count == 0:
+async def delete_document(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not await documents.delete_owned(db, doc_id, user.user_id):
         raise HTTPException(status_code=404, detail="Documento no encontrado")
-    await db.tables.delete_many({"documento_id": doc_id})
-    await db.pdf_files.delete_many({"documento_id": doc_id})
+    await db.commit()
     return {"ok": True}
 
 
 @app.get("/api/documents/{doc_id}/file")
-async def get_document_file(doc_id: str, user: User = Depends(get_current_user)):
-    data, _ = await _load_pdf_bytes(doc_id, user.user_id)
+async def get_document_file(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    data, _ = await _load_pdf_bytes(db, doc_id, user.user_id)
     if data is None:
         raise HTTPException(status_code=404, detail="PDF no disponible")
-    return Response(content=data, media_type="application/pdf", headers={"Cache-Control": "private, max-age=3600"})
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @app.get("/api/documents/{doc_id}/thumbnail")
-async def get_document_thumbnail(doc_id: str, user: User = Depends(get_current_user)):
-    doc = await db.documents.find_one({"id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not doc or not doc.get("thumb_path"):
+async def get_document_thumbnail(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    doc = await _owned_document(db, doc_id, user.user_id)
+    if not doc.thumb_path:
         raise HTTPException(status_code=404, detail="Miniatura no disponible")
-    data, _ = await asyncio.to_thread(get_object, doc["thumb_path"])
-    return Response(content=data, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+    data, _ = await asyncio.to_thread(get_object, doc.thumb_path)
+    return Response(
+        content=data,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 @app.put("/api/documents/{doc_id}/column-type")
-async def update_column_type(doc_id: str, upd: ColumnTypeUpdate, user: User = Depends(get_current_user)):
+async def update_column_type(
+    doc_id: str,
+    upd: ColumnTypeUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     if upd.tipo not in ("date", "number", "text"):
         raise HTTPException(status_code=400, detail="Tipo no válido")
-    table = await db.tables.find_one({"id": upd.table_id, "documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not table:
-        raise HTTPException(status_code=404, detail="Tabla no encontrada")
-
-    types = table.get("column_types", [])
+    table = await _owned_table(db, upd.table_id, doc_id, user.user_id)
+    types = list(table.column_types or [])
     while len(types) <= upd.columna:
         types.append("text")
     types[upd.columna] = upd.tipo
-
     updated_cells = []
-    for cell in table["cells"]:
+    for cell in table.cells:
         if cell["columna"] != upd.columna:
             continue
-        if cell.get("edited"):
-            updated_cells.append(cell)
-            continue
-        norm_val, norm_conf = normalize_value(cell.get("valor_original", ""), upd.tipo)
-        has_value = bool(norm_val.strip())
-        ext = cell.get("extraction_conf", 0.9)
-        cell["valor"] = norm_val
-        cell["norm_conf"] = norm_conf
-        cell["score_confianza"] = combine_confidence(ext, norm_conf, has_value)
-        cell["reason_code"] = reason_code(upd.tipo, ext, norm_conf, has_value)
+        if not cell.get("edited"):
+            value, conf = normalize_value(cell.get("valor_original", ""), upd.tipo)
+            cell.update(
+                {
+                    "valor": value,
+                    "norm_conf": conf,
+                    "score_confianza": combine_confidence(
+                        cell.get("extraction_conf", 0.9), conf, bool(value.strip())
+                    ),
+                    "reason_code": reason_code(
+                        upd.tipo,
+                        cell.get("extraction_conf", 0.9),
+                        conf,
+                        bool(value.strip()),
+                    ),
+                }
+            )
         updated_cells.append(cell)
-
-    await db.tables.update_one({"id": upd.table_id}, {"$set": {"cells": table["cells"], "column_types": types}})
+    table.column_types = types
+    await db.commit()
     return {"ok": True, "column_types": types, "cells": updated_cells}
 
 
 @app.post("/api/documents/{doc_id}/date-autofill")
-async def date_autofill(doc_id: str, upd: DateAutofill, user: User = Depends(get_current_user)):
-    """Detect the source date format for a column and reparse every original
-    value to ISO across the whole column, resolving ambiguous date cells."""
-    table = await db.tables.find_one({"id": upd.table_id, "documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not table:
-        raise HTTPException(status_code=404, detail="Tabla no encontrada")
-
-    col_cells = [c for c in table["cells"] if c["columna"] == upd.columna]
-    originals = [c.get("valor_original", "") for c in col_cells if not c.get("edited")]
+async def date_autofill(
+    doc_id: str,
+    upd: DateAutofill,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    table = await _owned_table(db, upd.table_id, doc_id, user.user_id)
+    originals = [
+        c.get("valor_original", "")
+        for c in table.cells
+        if c["columna"] == upd.columna and not c.get("edited")
+    ]
     fmt = upd.fmt or detect_date_format(originals)[0]
     if not fmt:
-        raise HTTPException(status_code=400, detail="No se pudo detectar un formato de fecha")
-
-    types = table.get("column_types", [])
-    while len(types) <= upd.columna:
-        types.append("text")
+        raise HTTPException(
+            status_code=400, detail="No se pudo detectar un formato de fecha"
+        )
+    types = list(table.column_types or [])
+    types.extend(["text"] * (upd.columna + 1 - len(types)))
     types[upd.columna] = "date"
-
-    updated_cells = []
-    for cell in table["cells"]:
-        if cell["columna"] != upd.columna:
-            continue
-        if cell.get("edited"):
-            updated_cells.append(cell)
-            continue
-        iso, ok = parse_date_with(cell.get("valor_original", ""), fmt)
-        if ok:
-            cell["valor"] = iso
-            cell["norm_conf"] = 1.0
-            cell["score_confianza"] = combine_confidence(cell.get("extraction_conf", 0.9), 1.0, True)
-            cell["reason_code"] = "high"
-        else:
-            cell["reason_code"] = reason_code("date", cell.get("extraction_conf", 0.9), cell.get("norm_conf", 0.55), bool((cell.get("valor") or "").strip()))
-        updated_cells.append(cell)
-
-    await db.tables.update_one({"id": upd.table_id}, {"$set": {"cells": table["cells"], "column_types": types}})
-    return {"ok": True, "fmt": fmt, "column_types": types, "cells": updated_cells}
+    for cell in table.cells:
+        if cell["columna"] == upd.columna and not cell.get("edited"):
+            iso, ok = parse_date_with(cell.get("valor_original", ""), fmt)
+            if ok:
+                cell.update(
+                    {
+                        "valor": iso,
+                        "norm_conf": 1.0,
+                        "score_confianza": combine_confidence(
+                            cell.get("extraction_conf", 0.9), 1.0, True
+                        ),
+                        "reason_code": "high",
+                    }
+                )
+    table.column_types = types
+    await db.commit()
+    return {
+        "ok": True,
+        "fmt": fmt,
+        "column_types": types,
+        "cells": [c for c in table.cells if c["columna"] == upd.columna],
+    }
 
 
 @app.put("/api/documents/{doc_id}/column-rules")
-async def set_column_rules(doc_id: str, upd: ColumnRulesUpdate, user: User = Depends(get_current_user)):
-    """Persist per-column validation rules (required / numeric range).
-    Violations are highlighted red in the review UI (evaluated client-side)."""
-    table = await db.tables.find_one({"id": upd.table_id, "documento_id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not table:
-        raise HTTPException(status_code=404, detail="Tabla no encontrada")
-    rules = table.get("column_rules", {}) or {}
-    r = upd.rules.model_dump()
-    if not r.get("required") and r.get("min") is None and r.get("max") is None:
+async def set_column_rules(
+    doc_id: str,
+    upd: ColumnRulesUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    table = await _owned_table(db, upd.table_id, doc_id, user.user_id)
+    rules = dict(table.column_rules or {})
+    value = upd.rules.model_dump()
+    if (
+        not value.get("required")
+        and value.get("min") is None
+        and value.get("max") is None
+    ):
         rules.pop(str(upd.columna), None)
     else:
-        rules[str(upd.columna)] = r
-    await db.tables.update_one({"id": upd.table_id}, {"$set": {"column_rules": rules}})
+        rules[str(upd.columna)] = value
+    table.column_rules = rules
+    await db.commit()
     return {"ok": True, "column_rules": rules}
 
 
+async def _export_items(db, user_id, doc_ids):
+    items = []
+    for doc_id in doc_ids:
+        doc = await documents.get(db, doc_id, user_id)
+        if doc:
+            items.append(
+                (
+                    _doc_dict(doc),
+                    [
+                        _table_dict(t)
+                        for t in await documents.tables_for_user(db, doc_id, user_id)
+                    ],
+                )
+            )
+    return items
+
+
 @app.post("/api/documents/export-batch")
-async def export_batch(payload: BatchExport, user: User = Depends(get_current_user)):
+async def export_batch(
+    payload: BatchExport,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     if not payload.doc_ids:
         raise HTTPException(status_code=400, detail="Selecciona al menos un documento")
-    items = []
-    for did in payload.doc_ids:
-        doc = await db.documents.find_one({"id": did, "user_id": user.user_id}, {"_id": 0})
-        if not doc:
-            continue
-        tables = await db.tables.find({"documento_id": did, "user_id": user.user_id}, {"_id": 0}).to_list(200)
-        items.append((doc, tables))
+    items = await _export_items(db, user.user_id, payload.doc_ids)
     if not items:
         raise HTTPException(status_code=404, detail="No se encontraron documentos")
-
     if payload.format == "xlsx":
-        data = export_batch_xlsx(items)
-        media, ext = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+        data, media, ext = (
+            export_batch_xlsx(items),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xlsx",
+        )
     elif payload.format in ("csv", "json"):
-        data = export_batch_zip(items, payload.format)
-        media, ext = "application/zip", "zip"
+        data, media, ext = (
+            export_batch_zip(items, payload.format),
+            "application/zip",
+            "zip",
+        )
     else:
         raise HTTPException(status_code=400, detail="Formato no soportado")
-
-    ids = [d["id"] for d, _ in items]
-    await db.documents.update_many({"id": {"$in": ids}, "user_id": user.user_id}, {"$set": {"estado": "exportado"}})
-    return Response(content=data, media_type=media, headers={
-        "Content-Disposition": f'attachment; filename="anclora_export.{ext}"'
-    })
+    for doc, _ in items:
+        (await documents.get(db, doc["id"], user.user_id)).estado = "exportado"
+    await db.commit()
+    return Response(
+        content=data,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="anclora_export.{ext}"'},
+    )
 
 
 @app.get("/api/documents/{doc_id}/export")
-async def export_document(doc_id: str, format: str = "xlsx", user: User = Depends(get_current_user)):
-    doc = await db.documents.find_one({"id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
-    tables = await db.tables.find({"documento_id": doc_id, "user_id": user.user_id}, {"_id": 0}).to_list(200)
-
-    base = os.path.splitext(doc["nombre_archivo"])[0]
+async def export_document(
+    doc_id: str,
+    format: str = "xlsx",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    doc = await _owned_document(db, doc_id, user.user_id)
+    payload_doc = _doc_dict(doc)
+    tables = [
+        _table_dict(t)
+        for t in await documents.tables_for_user(db, doc_id, user.user_id)
+    ]
+    base = os.path.splitext(doc.nombre_archivo)[0]
     if format == "json":
-        data, media, ext = export_json(doc, tables), "application/json", "json"
+        data, media, ext = export_json(payload_doc, tables), "application/json", "json"
     elif format == "csv":
-        data, media, ext = export_csv(doc, tables), "text/csv", "csv"
+        data, media, ext = export_csv(payload_doc, tables), "text/csv", "csv"
     elif format == "xlsx":
-        data = export_xlsx(doc, tables)
-        media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ext = "xlsx"
+        data, media, ext = (
+            export_xlsx(payload_doc, tables),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xlsx",
+        )
     else:
         raise HTTPException(status_code=400, detail="Formato no soportado")
-
-    await db.documents.update_one({"id": doc_id}, {"$set": {"estado": "exportado"}})
-    return Response(content=data, media_type=media, headers={
-        "Content-Disposition": f'attachment; filename="{base}.{ext}"'
-    })
+    doc.estado = "exportado"
+    await db.commit()
+    return Response(
+        content=data,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{base}.{ext}"'},
+    )
 
 
 @app.post("/api/documents/{doc_id}/export-sheets")
-async def export_sheets(doc_id: str, user: User = Depends(get_current_user)):
+async def export_sheets(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     if not is_configured():
         raise HTTPException(status_code=400, detail="Google Sheets no está configurado")
-    doc = await db.documents.find_one({"id": doc_id, "user_id": user.user_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
-
-    token = await db.google_tokens.find_one({"user_id": user.user_id}, {"_id": 0})
-    if not token:
+    doc = await _owned_document(db, doc_id, user.user_id)
+    token_row = await google_tokens.get(db, user.user_id)
+    if not token_row:
         state = uuid.uuid4().hex
-        await db.oauth_states.insert_one({"state": state, "user_id": user.user_id, "doc_id": doc_id, "created_at": now_iso()})
+        db.add(OAuthStateRow(state=state, user_id=user.user_id, doc_id=doc_id))
+        await db.commit()
         return {"auth_required": True, "auth_url": build_auth_url(state)}
-
-    tables = await db.tables.find({"documento_id": doc_id, "user_id": user.user_id}, {"_id": 0}).to_list(200)
     try:
-        url, updated = await asyncio.to_thread(export_document_to_sheets, token, doc, tables)
-    except Exception as e:
-        logger.warning(f"sheets export failed, re-auth required: {e}")
-        await db.google_tokens.delete_one({"user_id": user.user_id})
+        url, updated = await asyncio.to_thread(
+            export_document_to_sheets,
+            _token_dict(token_row),
+            _doc_dict(doc),
+            [
+                _table_dict(t)
+                for t in await documents.tables_for_user(db, doc_id, user.user_id)
+            ],
+        )
+    except Exception:
+        await db.delete(token_row)
         state = uuid.uuid4().hex
-        await db.oauth_states.insert_one({"state": state, "user_id": user.user_id, "doc_id": doc_id, "created_at": now_iso()})
+        db.add(OAuthStateRow(state=state, user_id=user.user_id, doc_id=doc_id))
+        await db.commit()
         return {"auth_required": True, "auth_url": build_auth_url(state)}
-
     if updated:
-        await db.google_tokens.update_one({"user_id": user.user_id}, {"$set": updated})
-    await db.documents.update_one({"id": doc_id}, {"$set": {"estado": "exportado"}})
+        for key, value in updated.items():
+            if key in {
+                "access_token",
+                "refresh_token",
+                "token_uri",
+                "client_id",
+                "client_secret",
+                "scopes",
+                "expires_at",
+            }:
+                setattr(
+                    token_row,
+                    key,
+                    (
+                        datetime.fromisoformat(value)
+                        if key == "expires_at" and isinstance(value, str)
+                        else value
+                    ),
+                )
+    doc.estado = "exportado"
+    await db.commit()
     return {"ok": True, "url": url}
 
 
 @app.get("/api/oauth/sheets/callback")
-async def sheets_callback(code: str = None, state: str = None, error: str = None):
-    front = (os.environ.get("FRONTEND_URL") or "").rstrip("/")
+async def sheets_callback(
+    code: str = None,
+    state: str = None,
+    error: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    front = settings.frontend_url.rstrip("/")
     if error or not code or not state:
         return RedirectResponse(f"{front}/history?sheets=error")
-    st = await db.oauth_states.find_one({"state": state}, {"_id": 0})
-    if not st:
+    state_row = await oauth_states.get(db, state)
+    if not state_row:
         return RedirectResponse(f"{front}/history?sheets=error")
-    await db.oauth_states.delete_one({"state": state})
+    doc_id, user_id = state_row.doc_id, state_row.user_id
+    await db.delete(state_row)
     try:
         token = await asyncio.to_thread(exchange_code, code)
-    except Exception as e:
-        logger.exception("sheets token exchange failed")
-        return RedirectResponse(f"{front}/review/{st['doc_id']}?sheets=error")
-    token["user_id"] = st["user_id"]
-    await db.google_tokens.update_one({"user_id": st["user_id"]}, {"$set": token}, upsert=True)
-    return RedirectResponse(f"{front}/review/{st['doc_id']}?sheets=connected")
+    except Exception:
+        await db.commit()
+        return RedirectResponse(f"{front}/review/{doc_id}?sheets=error")
+    token_fields = {
+        k: v
+        for k, v in token.items()
+        if k
+        in {
+            "access_token",
+            "refresh_token",
+            "token_uri",
+            "client_id",
+            "client_secret",
+            "scopes",
+            "expires_at",
+        }
+    }
+    if isinstance(token_fields.get("expires_at"), str):
+        token_fields["expires_at"] = datetime.fromisoformat(token_fields["expires_at"])
+    db.add(GoogleTokenRow(user_id=user_id, **token_fields))
+    await db.commit()
+    return RedirectResponse(f"{front}/review/{doc_id}?sheets=connected")
 
+
+@app.post("/api/dev/login")
+async def local_qa_login(
+    request: Request,
+    response: Response,
+    x_local_qa_token: Optional[str] = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    if settings.app_env != "development" or not settings.local_qa_login_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+    if request.client is None or request.client.host not in {
+        "127.0.0.1",
+        "::1",
+        "localhost",
+    }:
+        raise HTTPException(status_code=403, detail="Localhost only")
+    if not x_local_qa_token or x_local_qa_token != settings.local_qa_login_token:
+        raise HTTPException(status_code=401, detail="Invalid QA token")
+    row = await users.get_by_email(db, settings.qa_user_email)
+    if row is None:
+        row = await users.upsert(
+            db,
+            user_id=f"user_{uuid.uuid4().hex[:12]}",
+            email=settings.qa_user_email,
+            name="TableExtract QA",
+            is_test_user=True,
+        )
+    elif not row.is_test_user:
+        raise HTTPException(
+            status_code=500, detail="Configured QA user is not marked as test user"
+        )
+    token = f"qa_{uuid.uuid4().hex}"
+    await sessions.upsert(
+        db,
+        token=token,
+        user_id=row.user_id,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS),
+    )
+    await db.commit()
+    response.set_cookie(
+        "session_token",
+        token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        path="/",
+        max_age=SESSION_DAYS * 86400,
+    )
+    return {"user": {"user_id": row.user_id, "email": row.email, "name": row.name}}
 
 
 app.include_router(auth_router)
-
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=settings.cors_origin_list,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -546,11 +874,11 @@ app.add_middleware(
 async def startup():
     try:
         await asyncio.to_thread(init_storage)
-        logger.info("Object storage initialized")
-    except Exception as e:
-        logger.warning(f"Object storage init failed (will retry lazily): {e}")
+    except Exception as exc:
+        logger.warning("Object storage init failed: %s", exc)
+    await check_database()
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    pass
+    await close_engine()

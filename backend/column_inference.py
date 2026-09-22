@@ -4,22 +4,24 @@ STRICT SCOPE: the model is used ONLY to propose human-readable column header
 names from the detected content. It NEVER produces, alters, or generates the
 extracted cell data itself.
 """
+
 import json
 import logging
-import os
 import re
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
+EMERGENT_LLM_KEY = get_settings().emergent_llm_key
 
 
 def _fallback_names(header_row, ncols):
     names = []
     for c in range(ncols):
-        raw = (header_row[c]["value"].strip() if header_row and c < len(header_row) else "")
+        raw = (
+            header_row[c]["value"].strip() if header_row and c < len(header_row) else ""
+        )
         names.append(raw or f"Columna {c + 1}")
     return names
 
@@ -35,6 +37,8 @@ async def infer_column_names(rows, ncols, lang="es"):
     if not EMERGENT_LLM_KEY:
         return _fallback_names(header_row, ncols)
 
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+
     lang_instr = "en español" if lang == "es" else "in English"
     system = (
         "You are a data schema assistant. Given the first rows of a table extracted "
@@ -48,7 +52,9 @@ async def infer_column_names(rows, ncols, lang="es"):
             session_id="col-infer",
             system_message=system,
         ).with_model("openai", "gpt-5.4-mini")
-        msg = UserMessage(text=f"Table sample rows (JSON):\n{json.dumps(grid, ensure_ascii=False)}\n\nReturn a JSON array of {ncols} column names.")
+        msg = UserMessage(
+            text=f"Table sample rows (JSON):\n{json.dumps(grid, ensure_ascii=False)}\n\nReturn a JSON array of {ncols} column names."
+        )
         resp = await chat.send_message(msg)
         text = resp if isinstance(resp, str) else str(resp)
         m = re.search(r"\[.*\]", text, re.DOTALL)
