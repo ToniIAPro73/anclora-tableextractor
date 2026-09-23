@@ -35,6 +35,7 @@ export const Header = () => {
         {/* Logo */}
         <button
           data-testid="logo-home"
+          aria-label={t("common.appName")}
           onClick={() => navigate("/upload")}
           className="flex items-center gap-2.5 group"
         >

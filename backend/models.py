@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Any
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -18,12 +18,14 @@ class User(BaseModel):
     email: str
     name: str
     picture: Optional[str] = None
+    is_test_user: bool = False
     created_at: str = Field(default_factory=now_iso)
 
 
 # ---------- Domain models ----------
 class Cell(BaseModel):
     """Celda(id, tabla_id, fila, columna, valor, score_confianza, valor_original)"""
+
     fila: int
     columna: int
     valor: str = ""
@@ -39,6 +41,7 @@ class Cell(BaseModel):
 
 class TablaExtraida(BaseModel):
     """Tabla_extraida(id, documento_id, pagina_origen, filas, columnas)"""
+
     id: str = Field(default_factory=lambda: new_id("tbl"))
     documento_id: str
     pagina_origen: int
@@ -53,6 +56,7 @@ class TablaExtraida(BaseModel):
 
 class Documento(BaseModel):
     """Documento(id, nombre_archivo, fecha_carga, estado, num_paginas)"""
+
     id: str = Field(default_factory=lambda: new_id("doc"))
     user_id: str
     nombre_archivo: str

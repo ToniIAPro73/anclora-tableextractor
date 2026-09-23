@@ -2,8 +2,8 @@
 
 Used ONLY to write validated tables into a new spreadsheet the user owns.
 """
+
 import logging
-import os
 import warnings
 from datetime import datetime, timedelta, timezone
 
@@ -11,12 +11,14 @@ from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI = os.environ.get("GOOGLE_SHEETS_REDIRECT_URI")
+_settings = get_settings()
+GOOGLE_CLIENT_ID = _settings.google_client_id
+GOOGLE_CLIENT_SECRET = _settings.google_client_secret
+REDIRECT_URI = _settings.google_sheets_redirect_uri
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "openid",
@@ -39,14 +41,22 @@ def is_configured() -> bool:
 
 
 def build_auth_url(state: str) -> str:
-    flow = Flow.from_client_config(_CLIENT_CONFIG, scopes=SCOPES, redirect_uri=REDIRECT_URI)
-    url, _ = flow.authorization_url(access_type="offline", prompt="consent", state=state,
-                                    include_granted_scopes="true")
+    flow = Flow.from_client_config(
+        _CLIENT_CONFIG, scopes=SCOPES, redirect_uri=REDIRECT_URI
+    )
+    url, _ = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+        state=state,
+        include_granted_scopes="true",
+    )
     return url
 
 
 def exchange_code(code: str) -> dict:
-    flow = Flow.from_client_config(_CLIENT_CONFIG, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    flow = Flow.from_client_config(
+        _CLIENT_CONFIG, scopes=SCOPES, redirect_uri=REDIRECT_URI
+    )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         flow.fetch_token(code=code)
@@ -58,8 +68,11 @@ def exchange_code(code: str) -> dict:
         "client_id": creds.client_id,
         "client_secret": creds.client_secret,
         "scopes": list(creds.scopes or []),
-        "expires_at": (creds.expiry.replace(tzinfo=timezone.utc).isoformat()
-                       if creds.expiry else (datetime.now(timezone.utc) + timedelta(minutes=55)).isoformat()),
+        "expires_at": (
+            creds.expiry.replace(tzinfo=timezone.utc).isoformat()
+            if creds.expiry
+            else (datetime.now(timezone.utc) + timedelta(minutes=55)).isoformat()
+        ),
     }
 
 
@@ -111,11 +124,15 @@ def export_document_to_sheets(token: dict, document: dict, tables: list):
     if not tables:
         sheets_meta = [{"properties": {"title": "Vacío"}}]
 
-    spreadsheet = service.spreadsheets().create(
-        body={"properties": {"title": title}, "sheets": sheets_meta}
-    ).execute()
+    spreadsheet = (
+        service.spreadsheets()
+        .create(body={"properties": {"title": title}, "sheets": sheets_meta})
+        .execute()
+    )
     ss_id = spreadsheet["spreadsheetId"]
-    ss_url = spreadsheet.get("spreadsheetUrl", f"https://docs.google.com/spreadsheets/d/{ss_id}")
+    ss_url = spreadsheet.get(
+        "spreadsheetUrl", f"https://docs.google.com/spreadsheets/d/{ss_id}"
+    )
 
     data = []
     for ti, t in enumerate(tables):
@@ -124,7 +141,10 @@ def export_document_to_sheets(token: dict, document: dict, tables: list):
         rows = [header]
         for r in range(len(values)):
             page_vals = sorted({pages[r][c] for c in range(len(cols))})
-            rows.append([values[r][c] for c in range(len(cols))] + [", ".join(str(p) for p in page_vals)])
+            rows.append(
+                [values[r][c] for c in range(len(cols))]
+                + [", ".join(str(p) for p in page_vals)]
+            )
         data.append({"range": f"Tabla {ti + 1}!A1", "values": rows})
 
     if data:
@@ -134,6 +154,13 @@ def export_document_to_sheets(token: dict, document: dict, tables: list):
 
     updated = None
     if creds.token != token.get("access_token"):
-        updated = {**token, "access_token": creds.token,
-                   "expires_at": (creds.expiry.replace(tzinfo=timezone.utc).isoformat() if creds.expiry else token.get("expires_at"))}
+        updated = {
+            **token,
+            "access_token": creds.token,
+            "expires_at": (
+                creds.expiry.replace(tzinfo=timezone.utc).isoformat()
+                if creds.expiry
+                else token.get("expires_at")
+            ),
+        }
     return ss_url, updated

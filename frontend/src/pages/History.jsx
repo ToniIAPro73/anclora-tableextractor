@@ -3,10 +3,23 @@ import { useNavigate } from "react-router-dom";
 import { History as HistoryIcon, FileText, Trash2, ArrowRight, Loader2, UploadCloud, Sheet, FileJson, X, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Header } from "@/components/Header";
-import { StatusBadge } from "@/pages/Review";
 import { useLang } from "@/contexts/LangContext";
 import { api } from "@/lib/api";
 import { Checkbox } from "@/components/ui/checkbox";
+
+const HistoryStatusBadge = ({ estado, t }) => {
+  const tone = {
+    pendiente: "warning",
+    validado: "success",
+    exportado: "info",
+  }[estado] || "muted";
+
+  return (
+    <span data-testid={`status-badge-${estado}`} className={`ac-status-badge ac-status-badge--${tone}`}>
+      {t(`history.${estado}`)}
+    </span>
+  );
+};
 
 const ThumbCell = ({ docId }) => {
   const [url, setUrl] = useState(null);
@@ -25,7 +38,7 @@ const ThumbCell = ({ docId }) => {
   }, [docId]);
 
   return (
-    <div data-testid={`thumb-${docId}`} className="flex h-16 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted">
+    <div data-testid={`thumb-${docId}`} className="history-table__thumbnail">
       {url ? (
         <img src={url} alt="pdf" className="h-full w-full object-cover object-top" />
       ) : (
@@ -110,8 +123,11 @@ export default function HistoryPage() {
     } catch { return iso; }
   };
 
+  const allSelected = docs.length > 0 && selected.size === docs.length;
+  const someSelected = selected.size > 0 && !allSelected;
+
   return (
-    <div className="min-h-screen bg-background">
+    <div className="anclora-ds-scope min-h-screen bg-background">
       <Header />
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="fade-up flex items-center gap-3">
@@ -127,25 +143,25 @@ export default function HistoryPage() {
         {loading ? (
           <div className="flex items-center justify-center py-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
         ) : docs.length === 0 ? (
-          <div data-testid="history-empty" className="mt-10 flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-20 text-center">
+          <div data-testid="history-empty" className="ac-empty-state mt-10">
             <FileText className="h-10 w-10 text-muted-foreground" strokeWidth={1.4} />
-            <p className="mt-4 text-sm text-muted-foreground">{t("history.empty")}</p>
-            <button onClick={() => navigate("/upload")} className="mt-5 flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25">
+            <p className="ac-empty-state__summary">{t("history.empty")}</p>
+            <button onClick={() => navigate("/upload")} className="ac-button ac-button--primary">
               <UploadCloud className="h-4 w-4" /> {t("history.goUpload")}
             </button>
           </div>
         ) : (
           <>
             {selected.size > 0 && (
-              <div data-testid="batch-export-bar" className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/40 bg-primary/5 p-4 fade-up">
+              <div data-testid="batch-export-bar" className="history-table__bulk-bar fade-up">
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <Download className="h-4 w-4 text-primary" />
                   {selected.size} {t("history.selected")}
-                  <button data-testid="clear-selection-button" onClick={() => setSelected(new Set())} className="ml-2 flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+                  <button data-testid="clear-selection-button" onClick={() => setSelected(new Set())} className="ac-button ac-button--secondary ac-button--compact ml-2">
                     <X className="h-3 w-3" /> {t("history.clearSelection")}
                   </button>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="history-table__bulk-actions">
                   {[
                     { fmt: "xlsx", label: t("history.batchExportXlsx"), icon: Sheet },
                     { fmt: "csv", label: t("history.batchExportCsv"), icon: FileText },
@@ -156,7 +172,7 @@ export default function HistoryPage() {
                       data-testid={`batch-export-${fmt}-button`}
                       onClick={() => batchExport(fmt)}
                       disabled={batchLoading !== null}
-                      className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition hover:opacity-95 active:scale-[0.98] disabled:opacity-60"
+                      className="ac-button ac-button--primary ac-button--compact"
                     >
                       {batchLoading === fmt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
                       {label}
@@ -165,63 +181,65 @@ export default function HistoryPage() {
                 </div>
               </div>
             )}
-            <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-card fade-up">
-            <div className="overflow-x-auto thin-scroll">
-              <table className="w-full text-sm">
+            <div className="ac-data-table mt-6 fade-up">
+            <div className="ac-data-table__scroll thin-scroll" role="region" tabIndex="0" aria-label={t("history.tableLabel")}>
+              <table>
+                <caption className="sr-only">{t("history.tableLabel")}</caption>
                 <thead>
-                  <tr className="border-b border-border bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    <th className="px-4 py-3 w-10">
+                  <tr>
+                    <th scope="col" data-align="center">
                       <Checkbox
                         data-testid="select-all-checkbox"
-                        checked={selected.size === docs.length && docs.length > 0}
+                        checked={allSelected ? true : someSelected ? "indeterminate" : false}
                         onCheckedChange={toggleAll}
                         aria-label={t("history.selectAll")}
                       />
                     </th>
-                    <th className="px-4 py-3">{t("history.name")}</th>
-                    <th className="px-4 py-3">{t("history.date")}</th>
-                    <th className="px-4 py-3 text-center">{t("history.pages")}</th>
-                    <th className="px-4 py-3 text-center">{t("history.tables")}</th>
-                    <th className="px-4 py-3">{t("history.status")}</th>
-                    <th className="px-4 py-3 text-right">{t("history.actions")}</th>
+                    <th scope="col">{t("history.name")}</th>
+                    <th scope="col">{t("history.date")}</th>
+                    <th scope="col" data-align="center">{t("history.pages")}</th>
+                    <th scope="col" data-align="center">{t("history.tables")}</th>
+                    <th scope="col">{t("history.status")}</th>
+                    <th scope="col" data-column="actions">{t("history.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {docs.map((d) => (
-                    <tr key={d.id} data-testid={`history-row-${d.id}`} className={`border-b border-border last:border-0 hover:bg-muted/30 ${selected.has(d.id) ? "bg-primary/5" : ""}`}>
-                      <td className="px-4 py-3">
+                    <tr key={d.id} data-testid={`history-row-${d.id}`} data-selected={selected.has(d.id) ? "true" : undefined} data-interactive="true">
+                      <td data-align="center">
                         <Checkbox
                           data-testid={`select-doc-${d.id}`}
                           checked={selected.has(d.id)}
                           onCheckedChange={() => toggle(d.id)}
-                          aria-label="select"
+                          aria-label={t("history.selectDocument").replace("{name}", d.nombre_archivo)}
                         />
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
+                      <th scope="row">
+                        <div className="history-table__document">
                           <ThumbCell docId={d.id} />
-                          <span className="font-medium">{d.nombre_archivo}</span>
+                          <span className="history-table__document-name">{d.nombre_archivo}</span>
                         </div>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{fmtDate(d.fecha_carga)}</td>
-                      <td className="px-4 py-3 text-center">{d.num_paginas}</td>
-                      <td className="px-4 py-3 text-center">{d.num_tablas}</td>
-                      <td className="px-4 py-3"><StatusBadge estado={d.estado} t={t} /></td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-2">
+                      </th>
+                      <td>{fmtDate(d.fecha_carga)}</td>
+                      <td data-align="center">{d.num_paginas}</td>
+                      <td data-align="center">{d.num_tablas}</td>
+                      <td><HistoryStatusBadge estado={d.estado} t={t} /></td>
+                      <td data-column="actions">
+                        <div className="ac-data-table__actions">
                           <button
                             data-testid={`review-doc-${d.id}`}
                             onClick={() => navigate(`/review/${d.id}`)}
-                            className="flex items-center gap-1.5 rounded-full border border-primary/40 px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/10"
+                            className="ac-button ac-button--secondary ac-button--compact"
                           >
                             {t("history.review")} <ArrowRight className="h-3.5 w-3.5" />
                           </button>
                           <button
                             data-testid={`delete-doc-${d.id}`}
                             onClick={() => remove(d.id)}
-                            className="rounded-full p-2 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
+                            className="ac-button ac-button--destructive ac-button--compact ac-button--icon"
+                            aria-label={`${t("history.delete")} ${d.nombre_archivo}`}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="ac-button__icon h-4 w-4" aria-hidden="true" />
                           </button>
                         </div>
                       </td>
@@ -230,7 +248,7 @@ export default function HistoryPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+            </div>
           </>
         )}
       </main>
