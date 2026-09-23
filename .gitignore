@@ -88,3 +88,4 @@ android-sdk/
 **/.env
 **/.env.*
 !**/.env.example
+.env*

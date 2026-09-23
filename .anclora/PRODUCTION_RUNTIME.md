@@ -3,6 +3,30 @@
 PRODUCTION_RUNTIME_MANIFEST_VERSION=1.0
 STATUS=PRODUCTION_BACKED
 
+## Deployment infrastructure
+
+VERCEL_PROJECT_NAME=anclora-tableextractor
+VERCEL_PROJECT_ID=prj_0flR1QDL4GexJRj4mKh1vnportnn
+VERCEL_ROOT_DIRECTORY=frontend
+VERCEL_FRAMEWORK=create-react-app
+VERCEL_PRODUCTION_BRANCH=main
+GITHUB_DEFAULT_BRANCH=development
+PRODUCTION_DOMAIN=tableextractor.anclora.com
+DNS_PROVIDER=Hostinger
+DNS_STATUS=PENDING_HOSTINGER_CREDENTIALS
+BACKEND_RUNTIME_EXTERNAL_REQUIRED=true
+NEON_RESOURCE_NAME=anclora-tableextractor-db
+NEON_RESOURCE_ID=store_l5OIbT2XGoQuziLV
+DATABASE_PROVIDER=Neon PostgreSQL
+DATABASE_RUNTIME_SCOPE=production
+LOCAL_RUNTIME_MODEL=PRODUCTION_BACKED
+
+The Vercel project is frontend-only (`frontend/`). The FastAPI backend remains an
+external runtime and must be exposed through `REACT_APP_BACKEND_URL` before a
+production deployment is considered functional. The Neon resource is connected
+to Vercel Production, Preview and Development; local development uses the same
+Production database by contract. DNS remains authoritative at Hostinger.
+
 ## Runtime topology
 
 ```text
