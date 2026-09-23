@@ -41,6 +41,15 @@ El sistema combina un modelo de visión/layout para detectar la estructura de la
 
 Principio de diseño: **IA para interpretar ambigüedad, motor determinista para ejecutar y validar, intervención humana solo ante baja confianza.**
 
+### Integraciones independientes
+
+- **Autenticación:** Google OAuth/OIDC directo con scopes mínimos (`openid email profile`) y sesiones HttpOnly persistidas en PostgreSQL.
+- **Inferencia de columnas:** adaptador opcional para una API OpenAI-compatible (`LLM_PROVIDER=openai`); sin proveedor configurado o ante cualquier error se usa el fallback determinista.
+- **PDF y thumbnails:** PostgreSQL `BYTEA` por defecto, con adaptador S3-compatible opcional (`OBJECT_STORAGE_BACKEND=s3`). Las miniaturas se generan bajo demanda desde el PDF persistido.
+- **Google Sheets:** flujo OAuth independiente del login, solicitado sólo al exportar.
+
+La aplicación no requiere infraestructura privada, paquetes propietarios ni tooling de un proveedor de agentes de desarrollo.
+
 ## Stack técnico
 
 | Capa | Tecnología |
@@ -100,6 +109,16 @@ CORS_ORIGINS=http://localhost:3000
 QA_USER_EMAIL=qa.tableextract@anclora.local
 LOCAL_QA_LOGIN_ENABLED=false
 LOCAL_QA_LOGIN_TOKEN=
+GOOGLE_AUTH_CLIENT_ID=
+GOOGLE_AUTH_CLIENT_SECRET=
+GOOGLE_AUTH_REDIRECT_URI=http://localhost:8000/api/auth/google/callback
+LLM_PROVIDER=disabled
+LLM_API_KEY=
+LLM_BASE_URL=
+LLM_MODEL=gpt-4o-mini
+OBJECT_STORAGE_BACKEND=database
+DATABASE_PDF_MAX_BYTES=15000000
+```
 
 El entorno local puede apuntar deliberadamente a Neon producción. Todas las pruebas y sesiones locales deben utilizar exclusivamente el usuario QA dedicado (`QA_USER_EMAIL`); no se deben usar cuentas personales o de clientes.
 
@@ -115,7 +134,6 @@ python -m scripts.cleanup_qa_data --execute    # solo datos del usuario QA
 ```
 
 El endpoint local `POST /api/dev/login` sólo existe con `APP_ENV=development`, `LOCAL_QA_LOGIN_ENABLED=true`, petición desde localhost y la cabecera `X-Local-QA-Token` correcta. Usa la misma tabla de sesiones que el login normal.
-```
 
 ### Ejecución
 

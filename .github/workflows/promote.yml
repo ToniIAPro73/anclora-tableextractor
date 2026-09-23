@@ -16,8 +16,8 @@ on:
         options: [staging, production, main]
 
 permissions:
+  actions: read
   contents: write
-  statuses: read
 
 concurrency:
   group: promote-${{ inputs.target }}
@@ -60,13 +60,14 @@ jobs:
             exit 1
           fi
 
-      - name: Verify source SHA status
+      - name: Verify source CI workflow success
         run: |
           set -euo pipefail
-          STATUS="$(gh api "repos/${{ github.repository }}/commits/$source/status" --jq .state)"
-          echo "Combined status for $source: $STATUS"
-          if [ "$STATUS" = "failure" ] || [ "$STATUS" = "error" ]; then
-            echo "::error::Source SHA has failing checks. Refusing to promote red code."
+          RUNS_JSON="$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$source&per_page=100")"
+          SUCCESSFUL_RUNS="$(printf '%s' "$RUNS_JSON" | jq --arg sha "$source" '[.workflow_runs[] | select(.name == "CI / Development" and .head_sha == $sha and .status == "completed" and .conclusion == "success")] | length')"
+          echo "Successful CI / Development runs for $source: $SUCCESSFUL_RUNS"
+          if [ "$SUCCESSFUL_RUNS" -lt 1 ]; then
+            echo "::error::PROMOTION_BLOCKED_CI_NOT_GREEN: no completed successful CI / Development run exists for the exact source SHA."
             exit 1
           fi
         env:

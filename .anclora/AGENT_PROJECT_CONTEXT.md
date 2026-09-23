@@ -50,6 +50,7 @@ Before changing code, agents must read, in order:
 ## Git and delivery
 
 **WORKING_BRANCH=development**
+**DEFAULT_BRANCH=development**
 **FEATURE_BRANCHES=DISALLOWED**
 
 All development work must be performed directly on the `development` branch.
@@ -60,3 +61,8 @@ All development work must be performed directly on the `development` branch.
 - Use `.github/workflows/promote.yml` for promotion (fast-forward only).
 - Never force-push to any canonical branch.
 - Never commit functional changes directly to `staging`, `production`, or `main`.
+
+Runtime independence: authentication is direct Google OAuth/OIDC, LLM inference
+uses an optional public OpenAI-compatible adapter, and PDF persistence defaults to
+PostgreSQL BYTEA with optional S3-compatible storage. No coding-agent vendor is
+required by runtime, build, CI or development tooling.

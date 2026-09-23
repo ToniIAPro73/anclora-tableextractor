@@ -13,7 +13,7 @@
   ],
   "updated_files": ["/app/backend/tests/backend_test.py"],
   "success_rate": {"backend": "100% (36/36)", "frontend": "100% (all 4 iteration-3 flows verified end-to-end)"},
-  "test_credentials": "Header Authorization: Bearer test_session_fixed (user_id=test-user-fixed) or cookie session_token=test_session_fixed for domain pdf-to-excel-178.preview.emergentagent.com. Sessions pre-seeded in test_database. Secondary user other-user/other_session also seeded for isolation tests.",
+  "test_credentials": "Header Authorization: Bearer test_session_fixed (user_id=test-user-fixed) or cookie session_token=test_session_fixed for local QA. Sessions pre-seeded in test_database. Secondary user other-user/other_session also seeded for isolation tests.",
   "seed_data_creation": "None new; reused existing seeded sessions. Fresh docs uploaded/cleaned during tests are prefixed (sample_invoice/multi/batch_a/batch_b/reproc/uitest*) and deleted in fixture teardown / test try/finally.",
   "retest_needed": false,
   "main_agent_can_self_test": true,

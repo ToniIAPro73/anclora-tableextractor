@@ -1,65 +1,67 @@
-"""Emergent object storage integration (file & media storage)."""
+"""Provider-neutral optional S3-compatible object storage adapter."""
 
-import logging
+from __future__ import annotations
+
+from dataclasses import dataclass
+
 from config import get_settings
 
-import requests
 
-logger = logging.getLogger(__name__)
-
-STORAGE_BASE = (
-    get_settings().integration_proxy_url.strip()
-    or "https://integrations.emergentagent.com"
-)
-STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
-EMERGENT_KEY = get_settings().emergent_llm_key
-APP_NAME = "anclora-tableextract"
-
-_storage_key = None
+class StorageUnavailable(RuntimeError):
+    """Raised when an optional external storage backend is not configured."""
 
 
-def init_storage(force: bool = False):
-    """Call once at startup; returns a reusable session-scoped storage key."""
-    global _storage_key
-    if _storage_key and not force:
-        return _storage_key
-    resp = requests.post(
-        f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=30
+@dataclass(frozen=True)
+class StorageObject:
+    path: str
+    size: int
+    content_type: str
+
+
+def is_configured() -> bool:
+    settings = get_settings()
+    return settings.object_storage_backend.lower() == "s3" and bool(
+        settings.object_storage_bucket
+        and settings.object_storage_access_key_id
+        and settings.object_storage_secret_access_key
     )
-    resp.raise_for_status()
-    _storage_key = resp.json()["storage_key"]
-    return _storage_key
+
+
+def _client():
+    settings = get_settings()
+    if settings.object_storage_backend.lower() != "s3" or not is_configured():
+        raise StorageUnavailable("S3-compatible storage is not configured")
+    import boto3
+
+    kwargs = {
+        "service_name": "s3",
+        "region_name": settings.object_storage_region or None,
+        "endpoint_url": settings.object_storage_endpoint_url or None,
+        "aws_access_key_id": settings.object_storage_access_key_id,
+        "aws_secret_access_key": settings.object_storage_secret_access_key,
+    }
+    return boto3.client(**kwargs)
 
 
 def put_object(path: str, data: bytes, content_type: str) -> dict:
-    key = init_storage()
-    resp = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data,
-        timeout=120,
+    settings = get_settings()
+    client = _client()
+    client.put_object(
+        Bucket=settings.object_storage_bucket,
+        Key=path,
+        Body=data,
+        ContentType=content_type,
     )
-    if resp.status_code == 404:  # stale key -> refresh once
-        key = init_storage(force=True)
-        resp = requests.put(
-            f"{STORAGE_URL}/objects/{path}",
-            headers={"X-Storage-Key": key, "Content-Type": content_type},
-            data=data,
-            timeout=120,
-        )
-    resp.raise_for_status()
-    return resp.json()
+    return {"path": path, "size": len(data), "content_type": content_type}
 
 
-def get_object(path: str):
-    key = init_storage()
-    resp = requests.get(
-        f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60
-    )
-    if resp.status_code == 404:
-        key = init_storage(force=True)
-        resp = requests.get(
-            f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60
-        )
-    resp.raise_for_status()
-    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+def get_object(path: str) -> tuple[bytes, str]:
+    settings = get_settings()
+    response = _client().get_object(Bucket=settings.object_storage_bucket, Key=path)
+    body = response["Body"].read()
+    return body, response.get("ContentType", "application/octet-stream")
+
+
+def delete_object(path: str) -> None:
+    settings = get_settings()
+    _client().delete_object(Bucket=settings.object_storage_bucket, Key=path)

@@ -1,9 +1,6 @@
-"""Small-LLM column-name inference (GPT-5.4-mini via Emergent Universal Key).
+"""Optional OpenAI-compatible column-name inference with deterministic fallback."""
 
-STRICT SCOPE: the model is used ONLY to propose human-readable column header
-names from the detected content. It NEVER produces, alters, or generates the
-extracted cell data itself.
-"""
+from __future__ import annotations
 
 import json
 import logging
@@ -12,8 +9,6 @@ import re
 from config import get_settings
 
 logger = logging.getLogger(__name__)
-
-EMERGENT_LLM_KEY = get_settings().emergent_llm_key
 
 
 def _fallback_names(header_row, ncols):
@@ -26,44 +21,73 @@ def _fallback_names(header_row, ncols):
     return names
 
 
+def _normalize_names(value, ncols, fallback):
+    if isinstance(value, str):
+        match = re.search(r"\[.*\]", value, re.DOTALL)
+        if not match:
+            return fallback
+        try:
+            value = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return fallback
+    if not isinstance(value, list) or len(value) != ncols:
+        return fallback
+    names = [str(name).strip() for name in value]
+    return names if all(names) else fallback
+
+
+async def _provider_names(grid, ncols, lang, fallback):
+    settings = get_settings()
+    if settings.llm_provider.lower() in {"", "disabled", "none"} or not settings.llm_api_key:
+        return fallback
+    if settings.llm_provider.lower() != "openai":
+        logger.warning("Unsupported LLM provider %r; using deterministic fallback", settings.llm_provider)
+        return fallback
+
+    from openai import AsyncOpenAI
+
+    client_kwargs = {"api_key": settings.llm_api_key}
+    if settings.llm_base_url:
+        client_kwargs["base_url"] = settings.llm_base_url
+    client = AsyncOpenAI(**client_kwargs)
+    try:
+        language = "en inglés" if lang == "en" else "en español"
+        response = await client.chat.completions.create(
+            model=settings.llm_model,
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You propose concise human-readable table column names. "
+                        f"Return ONLY a JSON array of exactly {ncols} names {language}. "
+                        "Never modify or return cell data."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Table sample rows (JSON): {json.dumps(grid, ensure_ascii=False)}\n"
+                        f"Return exactly {ncols} column names."
+                    ),
+                },
+            ],
+        )
+        content = response.choices[0].message.content if response.choices else None
+        return _normalize_names(content, ncols, fallback)
+    except Exception as exc:  # provider failures must not block extraction
+        logger.warning("Column inference provider failed: %s", exc)
+        return fallback
+    finally:
+        await client.close()
+
+
 async def infer_column_names(rows, ncols, lang="es"):
-    """rows: list of raw rows (list of cell dicts). Returns list[str] of length ncols."""
+    """Return exactly ncols names without mutating the extracted cell grid."""
     if ncols == 0:
         return []
     header_row = rows[0] if rows else None
+    fallback = _fallback_names(header_row, ncols)
     sample = rows[:6]
-    grid = [[(c["value"] if c else "") for c in row] for row in sample]
-
-    if not EMERGENT_LLM_KEY:
-        return _fallback_names(header_row, ncols)
-
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-    lang_instr = "en español" if lang == "es" else "in English"
-    system = (
-        "You are a data schema assistant. Given the first rows of a table extracted "
-        "from a PDF, propose concise, human-readable column header names. "
-        "You MUST NOT invent, modify or output any cell data. Return ONLY a JSON "
-        f"array of exactly {ncols} short column names {lang_instr}."
-    )
-    try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id="col-infer",
-            system_message=system,
-        ).with_model("openai", "gpt-5.4-mini")
-        msg = UserMessage(
-            text=f"Table sample rows (JSON):\n{json.dumps(grid, ensure_ascii=False)}\n\nReturn a JSON array of {ncols} column names."
-        )
-        resp = await chat.send_message(msg)
-        text = resp if isinstance(resp, str) else str(resp)
-        m = re.search(r"\[.*\]", text, re.DOTALL)
-        if m:
-            names = json.loads(m.group(0))
-            names = [str(n).strip() for n in names][:ncols]
-            while len(names) < ncols:
-                names.append(f"Columna {len(names) + 1}")
-            return names
-    except Exception as e:  # pragma: no cover
-        logger.warning(f"Column inference LLM failed: {e}")
-    return _fallback_names(header_row, ncols)
+    grid = [[(cell["value"] if cell else "") for cell in row] for row in sample]
+    return await _provider_names(grid, ncols, lang, fallback)

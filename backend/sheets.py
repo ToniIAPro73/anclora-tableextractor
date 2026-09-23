@@ -21,9 +21,6 @@ GOOGLE_CLIENT_SECRET = _settings.google_client_secret
 REDIRECT_URI = _settings.google_sheets_redirect_uri
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
 ]
 
 _CLIENT_CONFIG = {

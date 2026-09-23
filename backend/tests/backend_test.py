@@ -4,7 +4,7 @@ import json
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://pdf-to-excel-178.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8000").rstrip("/")
 TOKEN = "test_session_fixed"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 SAMPLE_PDF = "/tmp/sample_invoice.pdf"

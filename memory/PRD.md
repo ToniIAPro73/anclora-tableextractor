@@ -4,10 +4,10 @@
 Web app to extract tables from PDFs (including scanned) into validated Excel/CSV/JSON with per-cell confidence. Mandatory flow (no chat UI): drag file → system detects tables & builds preview → user reviews only doubtful cells → downloads final file.
 
 ## Architecture
-- **Backend**: FastAPI (Python). Extraction layer (`extraction.py`) is separated from the schema-validation layer (`schema_validation.py`). Deterministic normalization (`normalization.py`, NO LLM). Small LLM (GPT-5.4-mini via Emergent Universal Key) used ONLY to infer column header names (`column_inference.py`), never to produce final data. Exporters (`exporters.py`).
+- **Backend**: FastAPI (Python). Extraction layer (`extraction.py`) is separated from the schema-validation layer (`schema_validation.py`). Deterministic normalization (`normalization.py`, NO LLM). An optional OpenAI-compatible LLM is used ONLY to infer column header names (`column_inference.py`), never to produce final data; deterministic fallback is always available. Exporters (`exporters.py`).
 - **Frontend**: React + Tailwind + shadcn/ui, lucide icons, framer-friendly CSS animations. Editable spreadsheet grid (`ConfidenceGrid.jsx`).
 - **DB**: MongoDB (`documents`, `tables` [embedded cells], `users`, `user_sessions`).
-- **Auth**: Emergent-managed Google Auth (session_token cookie + Bearer).
+- **Auth**: Direct Google OAuth/OIDC with PostgreSQL-backed session_token cookie + Bearer.
 
 ## User Personas
 - Analyst/accountant digitizing invoices/statements from PDFs into spreadsheets.
@@ -46,7 +46,7 @@ Web app to extract tables from PDFs (including scanned) into validated Excel/CSV
 - Compare original: hovering an edited cell shows original (strikethrough) → corrected.
 
 ## Pending — Google Sheets export (P1, needs credentials)
-- Requires a Google Cloud OAuth client (GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET) with Sheets API enabled and redirect URI https://pdf-to-excel-178.preview.emergentagent.com/api/oauth/sheets/callback. Playbook obtained; implementation blocked until user provides credentials.
+- Requires separate Google OAuth clients for login and Sheets when those capabilities are enabled. Login uses `GOOGLE_AUTH_*`; Sheets uses `GOOGLE_*` and its own callback. Credentials are supplied by deployment configuration.
 
 ## Iteration 2 (2026-09-20) — 4 features added, tested (backend 29/29, frontend 100%)
 - Real pdf.js page thumbnails in the upload dropzone (client-side).

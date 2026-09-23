@@ -1,11 +1,10 @@
 import "@/App.css";
 import React from "react";
-import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { LangProvider } from "@/contexts/LangContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
-import { AuthCallback } from "@/components/AuthCallback";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Login from "@/pages/Login";
 import Upload from "@/pages/Upload";
@@ -28,11 +27,6 @@ const RootRoute = () => {
 };
 
 function AppRouter() {
-  const location = useLocation();
-  // Handle Emergent OAuth callback synchronously (read reactive hash, not window.location.hash)
-  if (location.hash?.includes("session_id=")) {
-    return <AuthCallback />;
-  }
   return (
     <Routes>
       <Route path="/" element={<RootRoute />} />

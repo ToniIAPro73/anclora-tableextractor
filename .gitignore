@@ -81,9 +81,6 @@ memory/test_credentials.md
 # Mobile development
 android-sdk/
 
-# overlay black-box crash/user-report dumps — session data, never history
-**/.emergent/recordings/
-
 # Local environment files / secrets
 .env
 .env.*
@@ -91,6 +88,3 @@ android-sdk/
 **/.env
 **/.env.*
 !**/.env.example
-
-# Emergent internal runtime metadata
-.emergent/

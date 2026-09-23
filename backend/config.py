@@ -17,12 +17,23 @@ class Settings(BaseSettings):
     qa_user_email: str = "qa.tableextract@anclora.local"
     local_qa_login_enabled: bool = False
     local_qa_login_token: str = ""
+    google_auth_client_id: str = ""
+    google_auth_client_secret: str = ""
+    google_auth_redirect_uri: str = "http://localhost:8000/api/auth/google/callback"
     google_client_id: str = ""
     google_client_secret: str = ""
     google_sheets_redirect_uri: str = ""
-    emergent_llm_key: str = ""
-    integration_proxy_url: str = ""
-    emergent_object_storage_url: str = ""
+    llm_provider: str = "disabled"
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+    llm_model: str = "gpt-4o-mini"
+    object_storage_backend: str = "database"
+    object_storage_endpoint_url: str = ""
+    object_storage_region: str = ""
+    object_storage_bucket: str = ""
+    object_storage_access_key_id: str = ""
+    object_storage_secret_access_key: str = ""
+    database_pdf_max_bytes: int = 15_000_000
 
     model_config = SettingsConfigDict(
         env_file=(".env.local", ".env"),

@@ -7,7 +7,7 @@ STATUS=PRODUCTION_BACKED
 
 ```text
 React frontend -> FastAPI backend -> SQLAlchemy 2.x -> Neon PostgreSQL
-                                  -> external object storage for PDFs/thumbnails
+                                  -> PostgreSQL BYTEA or optional S3-compatible storage
                                   -> Google OAuth / Google Sheets (optional)
 ```
 
@@ -56,14 +56,28 @@ Required/optional names include:
 `APP_ENV`, `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `DATABASE_TARGET`,
 `ALLOW_PRODUCTION_MIGRATIONS`, `FRONTEND_URL`, `CORS_ORIGINS`, `QA_USER_EMAIL`,
 `LOCAL_QA_LOGIN_ENABLED`, `LOCAL_QA_LOGIN_TOKEN`, `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`, `GOOGLE_SHEETS_REDIRECT_URI`, `EMERGENT_LLM_KEY`,
+`GOOGLE_AUTH_CLIENT_ID`, `GOOGLE_AUTH_CLIENT_SECRET`, `GOOGLE_AUTH_REDIRECT_URI`,
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_SHEETS_REDIRECT_URI`,
+`LLM_PROVIDER`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`,
+`OBJECT_STORAGE_BACKEND`, `OBJECT_STORAGE_ENDPOINT_URL`, `OBJECT_STORAGE_REGION`,
+`OBJECT_STORAGE_BUCKET`, `OBJECT_STORAGE_ACCESS_KEY_ID`,
+`OBJECT_STORAGE_SECRET_ACCESS_KEY`, `DATABASE_PDF_MAX_BYTES`,
 `REACT_APP_BACKEND_URL`.
+
+Authentication is direct Google OAuth/OIDC with minimal `openid email profile`
+scopes. Google Sheets has an independent OAuth flow. LLM inference is optional and
+uses a public OpenAI-compatible API adapter. PDF storage defaults to PostgreSQL
+BYTEA and may use an explicitly configured S3-compatible backend.
 
 Never print connection strings, passwords, OAuth credentials, cookies, session
 tokens, PDF contents or LLM keys.
 
 ## Git delivery
 
-Current mission branch: `refactor/neon-postgresql`.
-Push after validation with `git push -u origin refactor/neon-postgresql`.
-Do not merge automatically or push directly to `main`.
+WORKING_BRANCH=development
+DEFAULT_BRANCH=development
+FEATURE_BRANCHES=DISALLOWED
+PROMOTION_FLOW=development->staging->production->main
+
+All implementation changes are committed and pushed directly to `development`.
+Promotion branches receive only fast-forward promotions through the governed workflow.

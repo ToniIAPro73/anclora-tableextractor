@@ -61,7 +61,7 @@ from normalization import (
     parse_date_with,
 )
 from schema_validation import build_cells, combine_confidence, reason_code
-from storage import APP_NAME, get_object, init_storage, put_object
+from storage import StorageUnavailable, delete_object, get_object, is_configured, put_object
 from sheets import (
     build_auth_url,
     exchange_code,
@@ -224,20 +224,13 @@ async def _process_document(
             await db.flush()
             return row
     stored_tables = await _tables_from_raw(doc.id, user.user_id, raw_tables, lang)
-    try:
-        thumb = await asyncio.to_thread(render_first_page_thumb, content)
-        if thumb:
-            tpath = f"{APP_NAME}/thumbs/{user.user_id}/{doc.id}.png"
-            tres = await asyncio.to_thread(put_object, tpath, thumb, "image/png")
-            row.thumb_path = tres.get("path", tpath)
-    except Exception as exc:
-        logger.warning("thumbnail store failed: %s", exc)
+    # Thumbnails are rendered on demand from the database-backed PDF. This keeps
+    # the default runtime independent of any external object-storage service.
     row.num_paginas, row.num_tablas = num_pages, len(stored_tables)
     row.process_ms = int((time.time() - t0) * 1000)
     db.add(row)
     db.add_all(stored_tables)
-    if len(content) <= 15_000_000:
-        storage_path = f"{APP_NAME}/uploads/{user.user_id}/{doc.id}.pdf"
+    if len(content) <= settings.database_pdf_max_bytes:
         pdf = PdfFileRow(
             documento_id=doc.id,
             user_id=user.user_id,
@@ -246,14 +239,18 @@ async def _process_document(
             size=len(content),
             is_deleted=False,
         )
-        try:
-            result = await asyncio.to_thread(
-                put_object, storage_path, content, "application/pdf"
-            )
-            pdf.storage_path = result.get("path", storage_path)
-            pdf.size = result.get("size", len(content))
-        except Exception as exc:
-            logger.warning("object storage upload failed, falling back to DB: %s", exc)
+        if is_configured():
+            storage_path = f"anclora-tableextract/uploads/{user.user_id}/{doc.id}.pdf"
+            try:
+                result = await asyncio.to_thread(
+                    put_object, storage_path, content, "application/pdf"
+                )
+                pdf.storage_path = result["path"]
+                pdf.size = result["size"]
+            except Exception as exc:
+                logger.warning("S3-compatible upload failed, falling back to PostgreSQL: %s", exc)
+                pdf.data = content
+        else:
             pdf.data = content
         db.add(pdf)
     await db.flush()
@@ -265,8 +262,12 @@ async def _load_pdf_bytes(db: AsyncSession, doc_id: str, user_id: str):
     if not rec:
         return None, None
     if rec.storage_path:
-        data, _ = await asyncio.to_thread(get_object, rec.storage_path)
-        return data, rec
+        try:
+            data, _ = await asyncio.to_thread(get_object, rec.storage_path)
+            return data, rec
+        except StorageUnavailable:
+            logger.warning("Configured PDF object storage is unavailable")
+            return None, rec
     return rec.data, rec
 
 
@@ -478,8 +479,14 @@ async def delete_document(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    pdf = await pdf_files.get_owned(db, doc_id, user.user_id)
     if not await documents.delete_owned(db, doc_id, user.user_id):
         raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if pdf and pdf.storage_path and is_configured():
+        try:
+            await asyncio.to_thread(delete_object, pdf.storage_path)
+        except Exception as exc:
+            logger.warning("S3-compatible delete failed for %s: %s", pdf.storage_path, exc)
     await db.commit()
     return {"ok": True}
 
@@ -506,10 +513,13 @@ async def get_document_thumbnail(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    doc = await _owned_document(db, doc_id, user.user_id)
-    if not doc.thumb_path:
+    await _owned_document(db, doc_id, user.user_id)
+    data, _ = await _load_pdf_bytes(db, doc_id, user.user_id)
+    if data is None:
         raise HTTPException(status_code=404, detail="Miniatura no disponible")
-    data, _ = await asyncio.to_thread(get_object, doc.thumb_path)
+    data = await asyncio.to_thread(render_first_page_thumb, data)
+    if not data:
+        raise HTTPException(status_code=404, detail="Miniatura no disponible")
     return Response(
         content=data,
         media_type="image/png",
@@ -872,10 +882,6 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
-    try:
-        await asyncio.to_thread(init_storage)
-    except Exception as exc:
-        logger.warning("Object storage init failed: %s", exc)
     await check_database()
 
 
