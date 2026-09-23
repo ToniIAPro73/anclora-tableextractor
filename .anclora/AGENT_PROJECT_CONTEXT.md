@@ -49,6 +49,14 @@ Before changing code, agents must read, in order:
 
 ## Git and delivery
 
-For the current migration mission, work on the explicitly requested branch
-`refactor/neon-postgresql`, push only that branch, and do not merge or push to `main`.
-Do not rewrite history or force-push.
+**WORKING_BRANCH=development**
+**FEATURE_BRANCHES=DISALLOWED**
+
+All development work must be performed directly on the `development` branch.
+
+- Do NOT create feature branches (`feat/*`, `fix/*`, `refactor/*`, `reconcile/*`).
+- Commit and push validated work directly to `development`.
+- Promotion follows the canonical flow: `development` → `staging` → `production` → `main`.
+- Use `.github/workflows/promote.yml` for promotion (fast-forward only).
+- Never force-push to any canonical branch.
+- Never commit functional changes directly to `staging`, `production`, or `main`.
