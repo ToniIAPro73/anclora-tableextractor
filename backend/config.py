@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     google_auth_client_id: str = ""
     google_auth_client_secret: str = ""
     google_auth_redirect_uri: str = "http://localhost:8000/api/auth/google/callback"
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    github_auth_redirect_uri: str = "http://localhost:8000/api/auth/github/callback"
+    auth_admin_emails: str = ""
+    auth_invitation_ttl_hours: int = 72
+    auth_password_min_length: int = 12
     google_client_id: str = ""
     google_client_secret: str = ""
     google_sheets_redirect_uri: str = ""

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     Text,
     func,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, BYTEA
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -25,6 +26,7 @@ class UserRow(Base):
     __tablename__ = "users"
     user_id: Mapped[str] = mapped_column(Text, primary_key=True)
     email: Mapped[str] = mapped_column(Text, unique=True, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(Text, default="active", nullable=False)
     name: Mapped[str] = mapped_column(Text, default="", nullable=False)
     picture: Mapped[Optional[str]] = mapped_column(Text)
     is_test_user: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -54,6 +56,46 @@ class UserSessionRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class PasswordCredentialRow(Base):
+    __tablename__ = "password_credentials"
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.user_id", ondelete="CASCADE"), primary_key=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class OAuthIdentityRow(Base):
+    __tablename__ = "oauth_identities"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_subject: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    __table_args__ = (UniqueConstraint("provider", "provider_subject", name="uq_oauth_identity_provider_subject"),)
+
+
+class InvitationRow(Base):
+    __tablename__ = "auth_invitations"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    email: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuthAuditRow(Base):
+    __tablename__ = "auth_audit_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(Text, index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(Text, index=True)
+    event_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class DocumentRow(Base):

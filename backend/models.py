@@ -22,6 +22,22 @@ class User(BaseModel):
     created_at: str = Field(default_factory=now_iso)
 
 
+class PasswordLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    token: str
+    email: str
+    password: str
+    name: str = ""
+
+
+class RecoveryRequest(BaseModel):
+    email: str
+
+
 # ---------- Domain models ----------
 class Cell(BaseModel):
     """Celda(id, tabla_id, fila, columna, valor, score_confianza, valor_original)"""

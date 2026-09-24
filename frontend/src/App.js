@@ -7,6 +7,7 @@ import { LangProvider } from "@/contexts/LangContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Login from "@/pages/Login";
+import Landing from "@/pages/Landing";
 import Upload from "@/pages/Upload";
 import Review from "@/pages/Review";
 import History from "@/pages/History";
@@ -23,13 +24,14 @@ const RootRoute = () => {
       </div>
     );
   }
-  return user ? <Navigate to="/upload" replace /> : <Login />;
+  return user ? <Navigate to="/upload" replace /> : <Landing />;
 };
 
 function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<RootRoute />} />
+      <Route path="/login" element={<Login />} />
       <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
       <Route path="/review" element={<ProtectedRoute><Review /></ProtectedRoute>} />
       <Route path="/review/:docId" element={<ProtectedRoute><Review /></ProtectedRoute>} />
