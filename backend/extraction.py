@@ -46,14 +46,26 @@ def _build_native_table(table, page_num):
     return {"rows": rows, "ncols": ncols, "page": page_num, "method": "native"}
 
 
-def _ocr_page(path, page_num, dpi=200):
+def _ocr_page(path, page_num, dpi=200, lang="spa+eng"):
     """Best-effort OCR table reconstruction for a scanned page."""
     if not _OCR_AVAILABLE:
         return None
     images = convert_from_path(path, first_page=page_num, last_page=page_num, dpi=dpi)
     if not images:
         return None
-    data = pytesseract.image_to_data(images[0], output_type=pytesseract.Output.DICT)
+    ocr_lang = "eng" if (lang or "es").lower().startswith("en") else "spa+eng"
+    data = None
+    for psm in (12, 6):
+        candidate = pytesseract.image_to_data(
+            images[0],
+            lang=ocr_lang,
+            config=f"--psm {psm}",
+            output_type=pytesseract.Output.DICT,
+        )
+        words = [text for text in candidate.get("text", []) if (text or "").strip()]
+        data = candidate
+        if len(words) >= 4:
+            break
     pt = 72.0 / dpi  # px -> PDF points
 
     lines = {}
@@ -132,7 +144,7 @@ def _ocr_page(path, page_num, dpi=200):
     return {"rows": rows, "ncols": ncols, "page": page_num, "method": "ocr"}
 
 
-def extract_tables(path, force_ocr=False):
+def extract_tables(path, force_ocr=False, lang="spa+eng"):
     """Returns (num_pages, [table_dict,...]) with raw (un-normalized) cells.
     force_ocr=True skips native extraction and runs OCR on every page."""
     tables = []
@@ -140,7 +152,7 @@ def extract_tables(path, force_ocr=False):
         num_pages = len(pdf.pages)
         for pidx, page in enumerate(pdf.pages, start=1):
             if force_ocr:
-                ocr = _ocr_page(path, pidx)
+                ocr = _ocr_page(path, pidx, lang=lang)
                 if ocr and ocr["rows"]:
                     tables.append(ocr)
                 continue
@@ -152,7 +164,7 @@ def extract_tables(path, force_ocr=False):
                     if grid and len(grid) >= 1:
                         tables.append(_build_native_table(tb, pidx))
             elif len(page_text.strip()) < 15:
-                ocr = _ocr_page(path, pidx)
+                ocr = _ocr_page(path, pidx, lang=lang)
                 if ocr and ocr["rows"]:
                     tables.append(ocr)
     return num_pages, tables

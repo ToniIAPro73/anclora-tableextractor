@@ -130,8 +130,8 @@ def _token_dict(row: GoogleTokenRow) -> dict:
     return result
 
 
-def _process_pdf_sync(path, force_ocr=False):
-    num_pages, tables = extract_tables(path, force_ocr=force_ocr)
+def _process_pdf_sync(path, force_ocr=False, lang="es"):
+    num_pages, tables = extract_tables(path, force_ocr=force_ocr, lang=lang)
     return num_pages, merge_multipage(tables)
 
 
@@ -216,7 +216,9 @@ async def _process_document(
         tmp.write(content)
         tmp.flush()
         try:
-            num_pages, raw_tables = await asyncio.to_thread(_process_pdf_sync, tmp.name)
+            num_pages, raw_tables = await asyncio.to_thread(
+                _process_pdf_sync, tmp.name, False, lang
+            )
         except Exception as exc:
             logger.exception("extraction failed")
             row.error = str(exc)
@@ -446,7 +448,7 @@ async def reprocess_document(
         tmp.write(data)
         tmp.flush()
         num_pages, raw_tables = await asyncio.to_thread(
-            _process_pdf_sync, tmp.name, mode == "ocr"
+            _process_pdf_sync, tmp.name, mode == "ocr", lang
         )
     stored = await _tables_from_raw(doc_id, user.user_id, raw_tables, lang)
     await db.execute(
