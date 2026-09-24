@@ -1,5 +1,6 @@
 import React from "react";
-import { Table2, ScanText, CalendarClock, ShieldCheck, ArrowRight } from "lucide-react";
+import { ScanText, CalendarClock, ShieldCheck, ArrowRight } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LangToggle } from "@/components/LangToggle";
 import { useLang } from "@/contexts/LangContext";
@@ -33,9 +34,8 @@ export default function Login() {
         {/* Left: brand + pitch */}
         <div className="fade-up">
           <div className="mb-8 flex items-center gap-3">
-            <span className="relative flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/30">
-              <Table2 className="h-6 w-6 text-primary" strokeWidth={1.8} />
-              <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-primary shadow-[0_0_10px_rgba(56,189,248,0.9)]" />
+            <span className="relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-full ring-1 ring-primary/30">
+              <BrandMark className="h-full w-full" />
             </span>
             <span className="text-xl font-bold tracking-tight" style={{ fontFamily: "Manrope, sans-serif" }}>
               Anclora <span className="text-primary">TableExtract</span>

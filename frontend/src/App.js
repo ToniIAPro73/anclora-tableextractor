@@ -10,7 +10,7 @@ import Login from "@/pages/Login";
 import Upload from "@/pages/Upload";
 import Review from "@/pages/Review";
 import History from "@/pages/History";
-import { Table2 } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 
 const RootRoute = () => {
   const { user, loading } = useAuth();
@@ -18,7 +18,7 @@ const RootRoute = () => {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/30 animate-pulse">
-          <Table2 className="h-7 w-7 text-primary" />
+          <BrandMark className="h-14 w-14" />
         </div>
       </div>
     );

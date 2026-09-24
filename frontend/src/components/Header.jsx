@@ -1,6 +1,7 @@
 import React from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Table2, Upload, FileSpreadsheet, History, LogOut } from "lucide-react";
+import { Upload, FileSpreadsheet, History, LogOut } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LangToggle } from "@/components/LangToggle";
 import { useLang } from "@/contexts/LangContext";
@@ -39,9 +40,8 @@ export const Header = () => {
           onClick={() => navigate("/upload")}
           className="flex items-center gap-2.5 group"
         >
-          <span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/30">
-            <Table2 className="h-5 w-5 text-primary" strokeWidth={1.8} />
-            <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary shadow-[0_0_8px_rgba(56,189,248,0.9)]" />
+          <span className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-full ring-1 ring-primary/30">
+            <BrandMark className="h-full w-full" />
           </span>
           <span className="hidden flex-col items-start leading-none sm:flex">
             <span className="text-[15px] font-bold tracking-tight" style={{ fontFamily: "Manrope, Inter, sans-serif" }}>
