@@ -1,6 +1,6 @@
 # Anclora TableExtract — Production Runtime Contract
 
-PRODUCTION_RUNTIME_MANIFEST_VERSION=1.0
+PRODUCTION_RUNTIME_MANIFEST_VERSION=2.0
 STATUS=PRODUCTION_BACKED
 
 ## Deployment infrastructure
@@ -62,6 +62,17 @@ to `DATABASE_URL`. If `DATABASE_TARGET=production`, Alembic must refuse to run u
 Never drop or truncate production data as part of this migration.
 
 ## Authentication and QA
+
+QA_POLICY=WORKSPACE_PROPORTIONAL
+QA_MODE_DEFAULT=AUTO
+TEST_EXECUTION_POLICY=BATCHED
+FULL_GATES_AFTER_EVERY_EDIT=false
+REPEAT_UNCHANGED_SUCCESSFUL_GATES=false
+VISUAL_QA_EXECUTION=BY_QA_MODE
+QA_MINIMUM_FOR_DATABASE_MIGRATION=FULL
+QA_MINIMUM_FOR_AUTH=FULL
+QA_MINIMUM_FOR_RELEASE_PROMOTION=FULL
+
 
 AUTH_MODEL=Cookie session-based authentication
 SESSION_STORAGE=PostgreSQL user_sessions table

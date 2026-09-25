@@ -1,6 +1,6 @@
 # Anclora TableExtract — Agent Project Context
 
-AGENT_PROJECT_CONTEXT_VERSION=1.0
+AGENT_PROJECT_CONTEXT_VERSION=2.0
 STATUS=ACTIVE
 
 ## Project identity
@@ -25,6 +25,29 @@ Before changing code, agents must read, in order:
 5. `.anclora/PRODUCTION_RUNTIME.md`.
 6. `.anclora/AOS_ADOPTION.md`.
 7. Task-specific documentation and tests.
+
+## Canonical QA Bootstrap
+
+QA governance is inherited from:
+[`../../ANCLORA_WORKSPACE_AGENT_POLICY.md`](../../ANCLORA_WORKSPACE_AGENT_POLICY.md)
+
+Default:
+`QA_MODE=AUTO`
+
+Before planning verification, classify:
+- `FAST`
+- `STANDARD`
+- `FULL`
+
+Task-level historical QA boilerplate does not override workspace QA classification.
+Only explicit mission tokens change the mode:
+- `QA_OVERRIDE=FAST`
+- `QA_OVERRIDE=STANDARD`
+- `QA_OVERRIDE=FULL`
+
+Testing, lint, and build execution must follow the workspace batched execution cadence:
+no repeated gates per micro-edit, and no rerun of unchanged successful gates without invalidation.
+Repository-specific runtime minima are defined in [`PRODUCTION_RUNTIME.md`](PRODUCTION_RUNTIME.md).
 
 ## Task routing
 
