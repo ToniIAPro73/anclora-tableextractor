@@ -87,6 +87,9 @@ USER_STORAGE=PostgreSQL users table
 QA_AUTH_MODEL=DEDICATED_USER
 QA_USER_EMAIL=qa.tableextract@anclora.local
 QA_DELETE_AFTER_TEST=false
+QA_SESSION_HELPER=backend/scripts/create_qa_session.py
+QA_SESSION_TTL_MINUTES=15
+QA_SESSION_TOKEN_HANDOFF=temporary_mode_0600_file_only
 
 The optional local QA login is available only when `APP_ENV=development`,
 `LOCAL_QA_LOGIN_ENABLED=true`, the request originates from localhost and the request
