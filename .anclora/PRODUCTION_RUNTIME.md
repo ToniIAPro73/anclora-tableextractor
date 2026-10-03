@@ -129,6 +129,14 @@ WORKING_BRANCH=development
 DEFAULT_BRANCH=development
 FEATURE_BRANCHES=DISALLOWED
 PROMOTION_FLOW=development->staging->production->main
+AUTO_PROMOTE=false
+EXPLICIT_PROMOTION_ALLOWED=true
+PROMOTION_AUTHORIZATION_SCOPE=CURRENT_TASK_OR_CONVERSATION
+PROMOTION_REQUIRES_PRE_STEP_GATES=true
+PROMOTION_STOP_ON_GATE_FAILURE=true
+PROMOTION_FORCE_PUSH_ALLOWED=false
+PROMOTION_OLD_AUTHORIZATION_PERSISTS=false
 
-All implementation changes are committed and pushed directly to `development`.
-Promotion branches receive only fast-forward promotions through the governed workflow.
+All implementation changes are committed and pushed directly to `development` by default.
+Promotion branches receive only explicitly requested, gated fast-forward promotions through
+the governed workflow.
