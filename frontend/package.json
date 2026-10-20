@@ -63,7 +63,7 @@
     "zod": "3.24.4"
   },
   "scripts": {
-    "start": "craco start",
+    "start": "node -e \"const p='../../anclora-infrastructure/scripts/free-port.mjs';if(require('fs').existsSync(p)){try{require('child_process').execFileSync(process.execPath,[p,'--port','3000'],{stdio:'inherit'})}catch(e){process.exit(e.status||1)}}\" && craco start",
     "build": "craco build",
     "test": "craco test"
   },
