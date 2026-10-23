@@ -1,19 +1,41 @@
-# Checklist de validación — auditoría de puertos locales: scripts de arranque cubiertos
+# Checklist de validación — política de promoción (2026-10-23)
 
-**Alcance:** tras auditar los scripts de arranque de todos los repos, se cubren los que seguían sin liberar su puerto (`preview`, scripts auxiliares de `dev`, `start` de los frontends CRA, `dev:log`) con la llamada a `anclora-infrastructure/scripts/free-port.mjs`, que se omite si el repo hermano no existe. Los frontends CRA liberan solo el puerto del frontend para no matar un backend hermano. En `anclora-visionflow` los scripts `dev:log` y `dev:ps` pasan del 3000 al puerto del registro (3027). En `anclora-impulso` el `BASE_URL` por defecto de Playwright pasa de 3000 a 3008, porque su `dev` ya sirve en el puerto del registro. No cambia código de la aplicación.
+> Entrega de cambios de flujo y configuración. El SHA final queda registrado en el commit que incluye este checklist.
 
-## Comprobaciones ejecutadas
+**Repositorio:** anclora-tableextractor
+**Rama:** development
+**Entorno de validación:** entorno development/Preview del repositorio, pendiente de revisión de Toni
+**Datos:** no se usaron ni modificaron datos de aplicación.
 
-| Comprobación | Resultado |
+## 1. Qué cambia
+- El workflow promote.yml admite el dispatch de cadena completa con target=full y source_sha revisado en Preview.
+- El contrato runtime define validación expresa en development, Preview y promoción completa asíncrona.
+
+## 2. Ya comprobado por el agente
+| Comprobación | Comando o método | Resultado |
+| --- | --- | --- |
+| Sintaxis de workflows | Parser YAML sobre los 41 `promote.yml` del workspace | PASS |
+| Integridad del diff | `git diff --check` | PASS |
+
+## 3. Pruebas no ejecutadas (NOT_RUN)
+| Prueba | Motivo concreto |
 | --- | --- |
-| `package.json` válido tras el cambio | PASS |
-| Tests de las herramientas (`anclora-infrastructure`) | PASS — 13 tests |
-| Ruta relativa a `free-port.mjs` desde `frontend/` | PASS |
+| Suite de la aplicación, lint y build | Cambios de políticas y configuración de promoción; no se ejecutaron suites por no afectar código de aplicación. |
+| Revisión visual y smoke test de Preview | Pendiente de Toni en el entorno publicado tras este push. |
+| Resultado de CI/deployments | No se esperará ni consultará; Toni revisa los entornos según la política acordada. |
 
-## Verificación visual
+## 4. Checklist para Toni
+| # | Dónde | Pasos | Resultado esperado | Bloqueante |
+| --- | --- | --- | --- | --- |
+| 1 | development | Revisar el contrato y `promote.yml` de este repositorio | Cambios acordes con el flujo aprobado | Sí |
+| 2 | Preview | Confirmar la Preview correspondiente al SHA de este push | La revisión corresponde al SHA publicado | Sí, antes de promoción |
 
-No aplica: solo scripts de arranque y configuración de tests.
+## 5. Riesgos y limitaciones
+- La promoción requiere el SHA exacto revisado en Preview. Si `development` avanza, el workflow completo se detendrá y requerirá revisión nueva.
+- Los resultados de staging, production y main quedan bajo revisión de Toni.
 
-## Promoción
-
-No solicitada en este cambio.
+## 6. Decisión de Toni
+- [ ] Validado en development
+- [ ] Validado en Preview
+- [ ] PROMOTE=FULL
+- [ ] No se promociona. Motivo: ______________________

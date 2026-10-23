@@ -86,7 +86,8 @@ Repository-specific runtime minima are defined in [`PRODUCTION_RUNTIME.md`](PROD
 All development work must be performed directly on the `development` branch.
 
 - Do NOT create feature branches (`feat/*`, `fix/*`, `refactor/*`, `reconcile/*`).
-- Commit and push validated work directly to `development`.
+- Present validated work in the development environment and wait for Toni's explicit approval before committing or pushing to `development`.
+- After that push, wait for Toni's Preview review; only `PROMOTE=FULL` authorizes the full asynchronous promotion chain.
 - Promotion is not automatic. An explicit current-task user request may authorize the canonical flow: `development` → `staging` → `production` → `main`.
 - Use `.github/workflows/promote.yml` for promotion (fast-forward only).
 - Never force-push to any canonical branch.
