@@ -1,19 +1,25 @@
-# Checklist de validación — TableExtractor
+# Checklist de validación — adopción AOS canónica (2026-10-30)
 
-**Cambio:** se retiró el healthcheck Docker que consultaba Neon cada 30 s. El endpoint de salud de la aplicación no se modificó.
-**Rama:** `development`
-**Validación en desarrollo por Toni:** confirmada
-**Preview del SHA publicado:** pendiente
-**Promoción:** solicitada con `PROMOTE=FULL`; ejecutar después de la revisión en Preview.
+> Se sobrescribe en cada entrega; el historial queda en Git.
 
-## Verificación del agente
+**Repositorio:** anclora-tableextractor
+**Rama:** development
+**Datos:** no se usaron ni modificaron datos de aplicación.
 
-- `git diff --check`: PASS.
-- Tests, lint y build: no ejecutados; no solicitados para este cambio localizado de infraestructura.
-- No se consultaron ni modificaron datos de aplicación.
+## 1. Qué cambia
+- Bootstrap mínimo (`AGENTS.md`, adaptadores de proveedor) y contratos `.anclora/` alineados con el modelo AOS ratificado (D-2026-0042): autoridad en Governance, router mínimo, claves Preview heredadas retiradas, semántica de runtime derivada de hechos ya declarados.
+- Copias de contratos sincronizadas desde Vault (9 ficheros).
+- Sin cambios de código de producto, dependencias ni despliegue.
 
-## Revisión de Toni
+## 2. Ya comprobado por el agente
+| Comprobación | Resultado |
+| --- | --- |
+| `aos-adopt` inspect/plan/apply, diff limitado a ficheros contractuales | PASS |
+| `runtime_semantics.py` sobre `.anclora/PRODUCTION_RUNTIME.md` | PASS |
+| Enlaces a Governance en los `.md` modificados, `git diff --check` | PASS |
 
-- [x] Validado en desarrollo.
-- [ ] Revisar en Preview el SHA publicado y confirmar el comportamiento del despliegue.
-- [ ] Tras validar Preview, ejecutar `PROMOTE=FULL`.
+## 3. NOT_RUN
+Tests, lint, typecheck, build y E2E de la aplicación: el diff es solo documentación/configuración contractual.
+
+## 4. Para Toni
+Sin pasos manuales. Bloqueante: no.
