@@ -98,11 +98,16 @@ preview or development database unless Toni explicitly changes this contract.
 ## Database and migrations
 
 DATABASE_PROVIDER=Neon PostgreSQL
+DATABASE_TARGET_FINGERPRINT=sha256:9284d733ffb7ffe3e501b809f4440a5f1aa54bebd8fd6a13ca27f3a524faac6d
 DATABASE_RUNTIME_SCOPE=production
 DATABASE_TARGET=production
 ORM=SQLAlchemy 2.x async
 DRIVER=psycopg 3
 MIGRATION_SYSTEM=Alembic
+MIGRATION_DIRECTORY=./backend/alembic/versions
+MIGRATION_RUNNER_WORKFLOW=.github/workflows/production-migrations.yml
+MIGRATION_ENVIRONMENT=production-migrations
+MIGRATION_CRYPTO_ATTESTATION=required
 MIGRATION_CONFIRMATION_REQUIRED=false
 PRODUCTION_MIGRATIONS_ALLOWED=true
 

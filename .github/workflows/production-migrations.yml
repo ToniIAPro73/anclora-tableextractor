@@ -1,0 +1,119 @@
+name: Production migrations (manual, protected)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  deployments: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: production-migrations
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Verify or apply Alembic migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production-migrations
+    if: github.repository == 'ToniIAPro73/anclora-tableextractor'
+    env:
+      DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+    steps:
+      - name: Checkout dispatched commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Mask database URL and validate target fingerprint
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { computeDatabaseFingerprint } from "./scripts/release/migration-attestation.mjs";
+            const raw = process.env.DATABASE_URL ?? "";
+            let u;
+            try { u = new URL(raw); } catch { console.error("::error::PRODUCTION_MIGRATION_DATABASE_URL missing or malformed"); process.exit(1); }
+            for (const v of [u.hostname, decodeURIComponent(u.username), decodeURIComponent(u.password), u.pathname.replace(/^\//, "")]) {
+              if (v && v.length >= 3) console.log("::add-mask::" + v);
+            }
+            const rt = readFileSync(".anclora/PRODUCTION_RUNTIME.md", "utf8");
+            const m = /^DATABASE_TARGET_FINGERPRINT=(.+)$/m.exec(rt);
+            const expected = m ? m[1].trim() : "";
+            const actual = computeDatabaseFingerprint(raw);
+            if (actual !== expected) {
+              console.error(`::error::Target fingerprint mismatch: ${actual} != ${expected}`);
+              process.exit(1);
+            }
+          '
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Check and apply pending Alembic migrations
+        id: alembic_check
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          expected_head="$(alembic heads | awk '{print $1}' | head -n 1)"
+          current_rev="$(alembic current | awk '{print $1}' | head -n 1 || true)"
+          echo "expected_head=$expected_head" >> "$GITHUB_OUTPUT"
+          if [ "$current_rev" = "$expected_head" ]; then
+            echo "applied_now=false" >> "$GITHUB_OUTPUT"
+            echo "All Alembic revisions already applied ($current_rev)."
+          else
+            echo "applied_now=true" >> "$GITHUB_OUTPUT"
+            alembic upgrade head
+          fi
+          post_rev="$(alembic current | awk '{print $1}' | head -n 1 || true)"
+          echo "post_rev=$post_rev" >> "$GITHUB_OUTPUT"
+
+      - name: Emit MigrationAttestationV1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ github.sha }}
+          CURRENT_REV: ${{ steps.alembic_check.outputs.post_rev }}
+          EXPECTED_HEAD: ${{ steps.alembic_check.outputs.expected_head }}
+          APPLIED_NOW: ${{ steps.alembic_check.outputs.applied_now }}
+        run: |
+          set -euo pipefail
+          dep_id="$(gh api "repos/$GITHUB_REPOSITORY/deployments?sha=$CANDIDATE_SHA&environment=production-migrations" --jq '.[0].id // empty' 2>/dev/null || true)"
+          approvers="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" --jq '[.[] | select(.state == "approved") | .user.login] | unique | join(",")' 2>/dev/null || true)"
+          node scripts/release/migration-attestation.mjs \
+            --repo-root . \
+            --output migration-attestation.json \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --deployment-id "$dep_id" \
+            --approved-by "$approvers" \
+            --current-revision "$CURRENT_REV" \
+            --expected-revision "$EXPECTED_HEAD" \
+            --applied-now "$APPLIED_NOW"
+
+      - name: Upload immutable MigrationAttestationV1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-attestation
+          path: |
+            migration-attestation.json
+            migration-attestation.json.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Generate Sigstore build provenance attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: migration-attestation.json
