@@ -288,7 +288,11 @@ async def root():
 
 
 @app.get("/api/health")
-async def health():
+async def health(deep: bool = False):
+    # Light by default: does not touch the database so Neon can scale to zero.
+    # ?deep=1 (or deep=true) verifies the DB connection and returns 503 if it fails.
+    if not deep:
+        return {"status": "ok", "database": "skipped"}
     try:
         await check_database()
         return {"status": "ok", "database": "ok"}

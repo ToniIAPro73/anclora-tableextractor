@@ -122,6 +122,15 @@ DATABASE_PDF_MAX_BYTES=15000000
 
 El entorno local puede apuntar deliberadamente a Neon producción. Todas las pruebas y sesiones locales deben utilizar exclusivamente el usuario QA dedicado (`QA_USER_EMAIL`); no se deben usar cuentas personales o de clientes.
 
+## Endpoint de salud (`/api/health`)
+
+Neon (plan Free) suspende el cómputo tras 5 min sin actividad; una sonda que consulte la BD en cada llamada lo mantiene despierto.
+
+- `GET /api/health` (ligero, por defecto): **no toca la BD**; devuelve `{"status": "ok", "database": "skipped"}`. Úsalo en healthchecks, proxy y monitores.
+- `GET /api/health?deep=1` (o `deep=true`): ejecuta `SELECT 1`; 503 si la BD falla. Solo para verificaciones puntuales, nunca como sonda periódica.
+
+Nota: el arranque del backend sigue ejecutando una comprobación de BD (una vez por inicio).
+
 ## Migraciones y QA
 
 Desde `backend/`, consulta el estado con `alembic current` y `alembic history`. Las migraciones contra producción están bloqueadas por defecto; para una ejecución explícita y revisada:
