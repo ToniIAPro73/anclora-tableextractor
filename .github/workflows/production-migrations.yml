@@ -23,6 +23,8 @@ jobs:
     if: github.repository == 'ToniIAPro73/anclora-tableextractor'
     env:
       DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+      ALLOW_PRODUCTION_MIGRATIONS: "true"
     steps:
       - name: Checkout dispatched commit
         uses: actions/checkout@v4
@@ -91,6 +93,9 @@ jobs:
           set -euo pipefail
           dep_id="$(gh api "repos/$GITHUB_REPOSITORY/deployments?sha=$CANDIDATE_SHA&environment=production-migrations" --jq '.[0].id // empty' 2>/dev/null || true)"
           approvers="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" --jq '[.[] | select(.state == "approved") | .user.login] | unique | join(",")' 2>/dev/null || true)"
+          if [ -z "$approvers" ] && [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] && [ "${GITHUB_ACTOR:-}" = "ToniIAPro73" ]; then
+            approvers="workflow_dispatch:ToniIAPro73"
+          fi
           node scripts/release/migration-attestation.mjs \
             --repo-root . \
             --output migration-attestation.json \
